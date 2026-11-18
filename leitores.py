@@ -68,7 +68,7 @@ def le_attack_shark():
                         abertos.remove(h)
                         continue
                     if r and len(r) >= 5 and r[0] == 0x03 and r[2] == 0x40 and r[4] <= 100 and r[3] in (1, 3):
-                        atualiza("x11", "Mouse Attack Shark X11", "mouse", r[4], r[3] == 3, "receptor 2.4G")
+                        atualiza("x11", "Mouse Attack Shark X11", "mouse", r[4], r[3] == 3, "receptor 2,4 GHz")
                         ultimo = time.time()
                 if ultimo and time.time() - ultimo > X11_DORMINDO:
                     some("x11")

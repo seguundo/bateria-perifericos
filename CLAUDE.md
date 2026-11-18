@@ -20,7 +20,8 @@ Programa para Windows 11 que mostra, numa faixa fixa sobre a barra de tarefas (�
 | `leitores.py` | **Um leitor por marca. É aqui que se adapta para novos periféricos.** |
 | `nucleo.py` | Estado compartilhado (`atualiza`, `some`), configuração (`config`, `muda_config`), histórico e `previsao()`. `VERSAO` e `REPO` ficam aqui. |
 | `bateria.py` | Faixa na barra (uma por tela), dica, menu, ícone na bandeja, avisos, versão nova, Iniciar com o Windows. |
-| `ajustes.py` | Janela de Ajustes (tkinter, em thread própria). |
+| `ajustes.py` | Janela de Ajustes (tkinter + tema `sv-ttk` no estilo Windows 11, claro/escuro, barra de título escura via DWM; thread própria). |
+| `icone.py` | Ícone do programa: pilha desenhada pixel a pixel em 16–24 px, mouse em 32 px ou mais. |
 | `atalho.py` / `criar_atalho.py` | Atalho na pasta e no Menu Iniciar, com AppUserModelID (nome e ícone nas notificações). |
 
 ## Tarefa típica: "adapta para os meus periféricos"
@@ -36,8 +37,8 @@ Programa para Windows 11 que mostra, numa faixa fixa sobre a barra de tarefas (�
 
 ## Como funciona
 
-- **Faixa:** janela Win32 em camadas (sempre por cima, sem foco, `UpdateLayeredWindow` com alfa por pixel; fundo com alfa 1 para dar para clicar e arrastar). Desenho com Pillow, ícones da fonte **Segoe Fluent Icons** (`SegoeIcons.ttf`: fone `E7F6`, mouse `E962`, controle `E7FC`, teclado `E765`, Bluetooth `E702`, raio `E945`). Uma faixa por barra (`Shell_TrayWnd` e cada `Shell_SecondaryTrayWnd`).
-- **Posição:** na tela principal, à esquerda de `TrayNotifyWnd`. Nas outras, 100 px (×escala) da borda direita (antes do relógio). Arrastar mexe só na horizontal; fica salvo em `margens[<id da barra>]`.
+- **Faixa:** janela Win32 em camadas (sempre por cima, sem foco, `UpdateLayeredWindow` com alfa por pixel; fundo com alfa 1 para dar para clicar e arrastar). Desenho com Pillow. Texto em **Segoe UI Variable** 12 px (`SegUIVar.ttf`, variação Regular; mesmo corpo do relógio). Bateria fraca: ícone + número vermelhos (#FF6E64 escuro / #C42B1C claro). Carregando: raio cheio desenhado como polígono (7×11 px). Ícones da fonte **Segoe Fluent Icons** (`SegoeIcons.ttf`: fone `E7F6`, mouse `E962`, controle `E7FC`, teclado `E765`, Bluetooth `E702`). Uma faixa por barra (`Shell_TrayWnd` e cada `Shell_SecondaryTrayWnd`).
+- **Posição:** na tela principal, à esquerda de `TrayNotifyWnd`. Nas outras, 90 px (×escala) da borda direita (antes do relógio). Arrastar mexe só na horizontal; fica salvo em `margens[<id da barra>]`.
 - **Tela cheia:** a faixa daquela tela se esconde depois de 2 s seguidos. Ignora janelas camufladas (DWM) e dos processos do shell (explorer, TextInputHost...), que ocupam a tela inteira de forma invisível.
 - **Relógios:** 1 s (redesenha, avisos, salva a cada 5 min) e 200 ms (dica e "trazer para a frente": clicar na barra a joga por cima da faixa).
 - **Avisos:** `Shell_NotifyIcon` com `NIF_INFO`, no ícone da bandeja. O nome e o ícone vêm do atalho do Menu Iniciar com AppUserModelID `BateriaPerifericos.App` (criado sozinho se faltar).

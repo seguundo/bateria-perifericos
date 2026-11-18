@@ -23,6 +23,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 import ajustes
 import atalho
+import icone
 import leitores
 import nucleo
 from nucleo import APP, VERSAO
@@ -43,6 +44,26 @@ def fonte(nomes, tam):
         except Exception:
             pass
     return ImageFont.load_default()
+
+
+def fonte_texto(tam, peso="Regular"):
+    """Segoe UI Variable, a mesma fonte do relógio da barra (cai para Segoe UI se faltar)."""
+    try:
+        f = ImageFont.truetype("SegUIVar.ttf", max(6, int(tam)))
+        f.set_variation_by_name(peso)
+        return f
+    except Exception:
+        return fonte(("segoeuib.ttf" if "Semibold" in peso or "Bold" in peso else "segoeui.ttf",), tam)
+
+
+def desenha_raio(d, x, meio, escala, cor):
+    """Raio cheio (carregando), desenhado como polígono: lê melhor que o raio de contorno da fonte."""
+    w, h = 7 * escala, 11 * escala
+    y = meio - h / 2
+    pontos = [(x + w * 0.62, y), (x, y + h * 0.58), (x + w * 0.45, y + h * 0.58),
+              (x + w * 0.32, y + h), (x + w, y + h * 0.40), (x + w * 0.56, y + h * 0.40)]
+    d.polygon(pontos, fill=cor)
+    return w
 
 
 def tema_claro():
@@ -69,9 +90,9 @@ def desenha_faixa(itens, altura, escala, alerta):
     cor = (0, 0, 0, 255) if claro else (255, 255, 255, 255)
     vermelho = (196, 43, 28, 255) if claro else (255, 110, 100, 255)
     f_icone = fonte(("SegoeIcons.ttf", "segmdl2.ttf"), round(17 * escala))
-    f_raio = fonte(("SegoeIcons.ttf", "segmdl2.ttf"), round(10 * escala))
-    f_txt = fonte(("segoeui.ttf",), round(13.5 * escala))
-    pad, gap_icone, gap_item = round(6 * escala), round(5 * escala), round(16 * escala)
+    f_txt = fonte_texto(round(12 * escala))                 # mesmo corpo do relógio
+    pad, gap_icone, gap_item = round(6 * escala), round(4 * escala), round(16 * escala)
+    gap_raio, w_raio = round(3 * escala), 7 * escala
 
     medidor = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     blocos, largura = [], pad
@@ -79,53 +100,53 @@ def desenha_faixa(itens, altura, escala, alerta):
         txt = f"{it['nivel']}%"
         wi = medidor.textlength(GLIFO.get(it["tipo"], G_BLUETOOTH), font=f_icone)
         wtx = medidor.textlength(txt, font=f_txt)
-        wr = medidor.textlength(G_RAIO, font=f_raio) + round(2 * escala) if it["carregando"] else 0
+        wr = gap_raio + w_raio if it["carregando"] else 0
         blocos.append((it, txt, wi, wtx, wr))
         largura += wi + gap_icone + wtx + wr + (gap_item if i < len(itens) - 1 else 0)
-    largura = int(largura + pad)
+    largura = int(largura + pad + 1)
 
     img = Image.new("RGBA", (max(largura, 1), altura), (0, 0, 0, 1))
     d = ImageDraw.Draw(img)
     x, meio, regioes = pad, altura / 2, []
     for it, txt, wi, wtx, wr in blocos:
         x0 = x
+        # bateria fraca: o bloco inteiro (ícone + número) fica vermelho, não só a cor do número
         c = vermelho if (it["nivel"] <= alerta and not it["carregando"]) else cor
-        d.text((x, meio), GLIFO.get(it["tipo"], G_BLUETOOTH), font=f_icone, fill=cor, anchor="lm")
+        d.text((x, meio), GLIFO.get(it["tipo"], G_BLUETOOTH), font=f_icone, fill=c, anchor="lm")
         x += wi + gap_icone
         d.text((x, meio + round(0.5 * escala)), txt, font=f_txt, fill=c, anchor="lm")
         x += wtx
         if wr:
-            x += round(2 * escala)
-            d.text((x, meio), G_RAIO, font=f_raio, fill=cor, anchor="lm")
-            x += wr - round(2 * escala)
+            x += gap_raio
+            x += desenha_raio(d, x, meio, escala, cor)
         regioes.append((int(x0 - gap_item / 2), int(x + gap_item / 2), it["chave"]))
         x += gap_item
     return img, regioes
 
 
 def desenha_dica(linhas, escala):
-    """linhas: [(texto, negrito)]. Balão no estilo das dicas do Windows 11."""
+    """linhas: [(texto, estilo)], estilo = "titulo", "normal" ou "alerta". Balão no estilo do Windows 11."""
     claro = tema_claro()
     fundo = (249, 249, 249, 250) if claro else (43, 43, 43, 250)
     borda = (0, 0, 0, 40) if claro else (255, 255, 255, 30)
-    cor = (0, 0, 0, 255) if claro else (255, 255, 255, 255)
-    cor2 = (90, 90, 90, 255) if claro else (200, 200, 200, 255)
-    f_n = fonte(("segoeuib.ttf", "segoeui.ttf"), round(12.5 * escala))
-    f_r = fonte(("segoeui.ttf",), round(12 * escala))
+    cores = {"titulo": (0, 0, 0, 255) if claro else (255, 255, 255, 255),
+             "normal": (90, 90, 90, 255) if claro else (200, 200, 200, 255),
+             "alerta": (196, 43, 28, 255) if claro else (255, 110, 100, 255)}
+    fontes = {"titulo": fonte_texto(round(12 * escala), "Semibold Text"),
+              "normal": fonte_texto(round(12 * escala)), "alerta": fonte_texto(round(12 * escala))}
     pad, entre = round(10 * escala), round(4 * escala)
     med = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     medidas = []
-    for texto, negrito in linhas:
-        caixa = med.textbbox((0, 0), texto, font=f_n if negrito else f_r)
-        medidas.append((caixa[2] - caixa[0], round(16 * escala)))
+    for texto, estilo in linhas:
+        medidas.append((med.textlength(texto, font=fontes[estilo]), round(16 * escala)))
     w = int(max(m[0] for m in medidas) + 2 * pad)
     h = int(sum(m[1] for m in medidas) + entre * (len(linhas) - 1) + 2 * pad)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle((0, 0, w - 1, h - 1), radius=round(7 * escala), fill=fundo, outline=borda)
     y = pad
-    for (texto, negrito), (_, alt) in zip(linhas, medidas):
-        d.text((pad, y + alt / 2), texto, font=f_n if negrito else f_r, fill=cor if negrito else cor2, anchor="lm")
+    for (texto, estilo), (_, alt) in zip(linhas, medidas):
+        d.text((pad, y + alt / 2), texto, font=fontes[estilo], fill=cores[estilo], anchor="lm")
         y += alt + entre
     return img
 
@@ -142,14 +163,7 @@ def registra_avisos():
     """Cria o ícone do programa e dá nome/ícone próprios às notificações (em vez de 'Python')."""
     try:
         os.makedirs(nucleo.PASTA_DADOS, exist_ok=True)
-        img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        d.rounded_rectangle((8, 8, 248, 248), radius=56, fill=(32, 32, 36, 255))
-        d.text((128, 120), G_MOUSE, font=fonte(("SegoeIcons.ttf",), 144), fill=(255, 255, 255, 255), anchor="mm")
-        d.rounded_rectangle((60, 196, 196, 220), radius=10, fill=(70, 70, 76, 255))
-        d.rounded_rectangle((60, 196, 150, 220), radius=10, fill=(90, 200, 120, 255))
-        img.save(ICONE_PNG)
-        img.save(ICONE_ICO, sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)])
+        icone.salva(ICONE_ICO, ICONE_PNG)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, rf"Software\Classes\AppUserModelId\{AUMID}") as k:
             winreg.SetValueEx(k, "DisplayName", 0, winreg.REG_SZ, APP)
             winreg.SetValueEx(k, "IconUri", 0, winreg.REG_SZ, ICONE_PNG)
@@ -461,7 +475,7 @@ class Faixa:
                 ref = bandeja_esq if bandeja_esq else r.right - round(330 * esc)
                 margem = r.right - ref + round(8 * esc)      # encosta na setinha ^ com uma folga pequena
             else:
-                margem = round(100 * esc)                    # barra secundária: à esquerda do relógio
+                margem = round(90 * esc)                     # barra secundária: à esquerda do relógio (mesmo respiro da tela principal)
         x = max(r.left, r.right - margem - w)
         if not self.arrastando:
             pinta(self.hwnd, self.img, x, r.top)
@@ -532,12 +546,13 @@ class Dica:
         if not v:
             return None
         estado = "carregando" if v["carregando"] else "na bateria"
+        fraca = not v["carregando"] and v["nivel"] <= nucleo.config()["alerta"]
         prev = nucleo.previsao(chave)
-        linhas = [(v["nome"], True), (f"{v['nivel']}% · {estado}", False)]
-        linhas.append((prev or "previsão: aprendendo o ritmo de uso…", False))
+        linhas = [(v["nome"], "titulo"), (f"{v['nivel']}% · {estado}", "alerta" if fraca else "normal")]
+        linhas.append((prev or "Previsão: aprendendo o ritmo de uso…", "normal"))
         visto = int(time.time() - v["visto"])
         quando = "agora" if visto < 60 else f"há {visto // 60} min"
-        linhas.append((f"via {v['origem'] or '—'} · lido {quando}", False))
+        linhas.append((f"Via {v['origem'] or '—'} · lido {quando}", "normal"))
         return linhas
 
     def mostra(self, faixa, chave, centro_x):

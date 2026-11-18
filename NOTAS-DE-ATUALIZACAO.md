@@ -1,5 +1,34 @@
 # Notas de atualização
 
+## 1.2.0 (18/11/2026): acabamento visual
+
+Ajustes da revisão visual, para o programa parecer de fábrica do Windows 11.
+
+### Barra
+- **Número do mesmo tamanho do relógio:** a % agora usa a mesma fonte do relógio (Segoe UI Variable, 12 px). Antes ela saía uns 25% maior.
+- **Raio de "carregando" legível:** um raio cheio e maior, um pouco afastado do número. O de antes era fino e parecia sujeira na tela.
+- **Bateria fraca mais visível:** o bloco inteiro fica vermelho (ícone + número), não só o número. Assim funciona também para quem não distingue bem o vermelho.
+- **Segunda tela:** o espaço até o relógio ficou igual ao da tela principal até a setinha `^`.
+
+### Dica ao passar o mouse
+- Mesma fonte do Windows. Cada linha começa com maiúscula ("Previsão: …", "Via iCUE · lido agora").
+- Previsão escrita como "Restam ≈ 2 dias" e "Cheio em ≈ 40 min".
+- Bateria fraca: a linha da % fica vermelha, combinando com a barra.
+- "2.4G" virou "2,4 GHz".
+
+### Janela de Ajustes
+- **Visual do Windows 11** (tema Sun Valley), escura quando o Windows está no escuro, com a barra de título escura também.
+- Ícone do programa no título (antes aparecia a pena do Python).
+- Títulos de seção separados das instruções, que ficam em cinza menor; "desligado" em cinza ao lado do nome.
+- **Salvar** em destaque como botão principal; Enter salva e Esc cancela.
+- As setas de ordem ficam desativadas no primeiro e no último item.
+
+### Ícone do programa
+- Desenho próprio para os tamanhos pequenos (16, 20 e 24 px): uma pilha com carga verde, que lê bem na bandeja. O mouse ficou só nos tamanhos grandes, agora com uma borda clara para não sumir na barra escura.
+
+### Para quem já usava
+- Rode `pip install -r requirements.txt` de novo (entrou o tema `sv-ttk`, só Python, sem `.exe`) e `python criar_atalho.py` para atualizar o ícone do atalho.
+
 ## 1.1.0 (18/11/2026)
 
 ### Novidades

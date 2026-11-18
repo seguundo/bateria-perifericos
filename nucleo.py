@@ -5,7 +5,7 @@ import threading
 import time
 
 APP = "Bateria dos Periféricos"
-VERSAO = "1.1.0"
+VERSAO = "1.2.0"
 REPO = "seguundo/bateria-perifericos"          # onde procurar versão nova (troque se fizer um fork)
 PASTA_DADOS = os.path.join(os.environ.get("APPDATA", "."), "BateriaPerifericos")
 CONFIG = os.path.join(PASTA_DADOS, "config.json")
@@ -146,7 +146,7 @@ def _registra(chave, nivel, carregando):
 
 
 def previsao(chave):
-    """Texto como '≈ 2 dias restantes' ou 'cheio em ≈ 40 min', ou None se ainda não dá para prever."""
+    """Texto como 'Restam ≈ 2 dias' ou 'Cheio em ≈ 40 min', ou None se ainda não dá para prever."""
     with trava:
         pontos = list((_hist or {}).get(chave, []))
         atual = estado.get(chave)
@@ -174,7 +174,7 @@ def previsao(chave):
     por_hora = variacao / horas
     falta = (atual["nivel"] if not carregando else 100 - atual["nivel"]) / por_hora
     texto = _duracao(falta)
-    return f"cheio em ≈ {texto}" if carregando else f"≈ {texto} restantes"
+    return f"Cheio em ≈ {texto}" if carregando else f"Restam ≈ {texto}"
 
 
 def _duracao(horas):
