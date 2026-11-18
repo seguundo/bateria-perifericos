@@ -2,7 +2,11 @@ BATERIA DOS PERIFÉRICOS
 =======================
 
 Mostra na barra de tarefas do Windows 11, ao lado da setinha ^, o ícone e a % de bateria
-dos seus periféricos sem fio (fone, mouse, controle...).
+dos seus periféricos sem fio (fone, mouse, controle, teclado...).
+
+Também mostra a previsão de duração ao passar o mouse, avisa quando a bateria fica fraca
+ou termina de carregar, aparece em todas as telas e tem uma janela de Ajustes
+(botão direito nos ícones > Ajustes...).
 
 COMO ADAPTAR PARA OS SEUS PERIFÉRICOS (com o Claude Code)
 ----------------------------------------------------------
@@ -17,12 +21,17 @@ COMO ADAPTAR PARA OS SEUS PERIFÉRICOS (com o Claude Code)
    O arquivo CLAUDE.md desta pasta explica para o Claude como o programa funciona
    e como descobrir a bateria de cada marca.
 
-4. Quando estiver pronto, abra o atalho "Bateria Perifericos" (fica na pasta e no Menu Iniciar).
+4. Quando estiver pronto, abra o atalho "Bateria dos Periféricos" (fica na pasta e no
+   Menu Iniciar).
    - Arraste os ícones para o lado para mudar de lugar.
-   - Botão direito em cima: menu com "Iniciar com o Windows" e "Sair".
+   - Pare o mouse em cima de um ícone para ver os detalhes.
+   - Botão direito em cima: Ajustes, "Iniciar com o Windows" e "Sair".
 
-Já funciona sem adaptar: controles e fones Bluetooth, headsets Corsair (com o iCUE
-aberto) e o mouse Attack Shark X11.
+Já funciona sem adaptar: aparelhos Bluetooth, Logitech, Razer, Corsair (com o iCUE aberto),
+mouse Attack Shark X11 e, com o headsetcontrol.exe na pasta, headsets SteelSeries/HyperX.
 
 Precisa do Python instalado (o Claude instala o resto). Não tem .exe de propósito:
 antivírus como o Kaspersky apagam programas Python transformados em .exe por engano.
+
+O que mudou em cada versão: NOTAS-DE-ATUALIZACAO.md
+Projeto: https://github.com/seguundo/bateria-perifericos
