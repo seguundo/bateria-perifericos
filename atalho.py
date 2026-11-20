@@ -64,6 +64,28 @@ def _solta(obj):
         _metodo(obj, 2)(obj)
 
 
+def le(caminho):
+    """(programa, argumentos) de um atalho existente, ou None se não existir/não der para ler."""
+    if not os.path.exists(caminho):
+        return None
+    ole32.CoInitialize(None)
+    link = ctypes.c_void_p()
+    ole32.CoCreateInstance(ctypes.byref(CLSID_ShellLink), None, 1, ctypes.byref(IID_IShellLinkW), ctypes.byref(link))
+    arquivo = None
+    try:
+        arquivo = _interface(link, IID_IPersistFile)
+        _chama(arquivo, 5, (wt.LPCWSTR, wt.DWORD), caminho, 0)                 # Load (somente leitura)
+        alvo, argumentos = ctypes.create_unicode_buffer(520), ctypes.create_unicode_buffer(1024)
+        _chama(link, 3, (wt.LPWSTR, ctypes.c_int, ctypes.c_void_p, wt.DWORD), alvo, 520, None, 0)   # GetPath
+        _chama(link, 10, (wt.LPWSTR, ctypes.c_int), argumentos, 1024)                              # GetArguments
+        return alvo.value, argumentos.value
+    except Exception:
+        return None
+    finally:
+        _solta(arquivo)
+        _solta(link)
+
+
 def cria(destino, alvo, argumentos="", pasta="", icone="", descricao="", aumid=None):
     ole32.CoInitialize(None)
     link = ctypes.c_void_p()

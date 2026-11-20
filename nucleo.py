@@ -1,11 +1,13 @@
 """Estado compartilhado: periféricos lidos, configuração, histórico e previsão de duração."""
+import copy
 import json
 import os
 import threading
 import time
 
 APP = "Bateria dos Periféricos"
-VERSAO = "1.2.0"
+VERSAO = "1.2.1"
+ORDEM_TIPO = {"headset": 0, "mouse": 1, "teclado": 2, "controle": 3, "bluetooth": 4}
 REPO = "seguundo/bateria-perifericos"          # onde procurar versão nova (troque se fizer um fork)
 PASTA_DADOS = os.path.join(os.environ.get("APPDATA", "."), "BateriaPerifericos")
 CONFIG = os.path.join(PASTA_DADOS, "config.json")
@@ -26,6 +28,7 @@ PADRAO = {
 }
 
 trava = threading.RLock()
+_trava_disco = threading.Lock()     # só uma gravação por vez (relógio, Ajustes e aviso de versão salvam)
 estado = {}            # chave -> dict(nome, tipo, nivel, carregando, visto, origem)
 parar = threading.Event()
 _cfg = None
@@ -36,55 +39,73 @@ _hist_sujo = False
 
 # ---------- configuração ----------
 def _le_json(caminho, padrao):
+    """Lê um JSON do tipo esperado. Se estiver corrompido, guarda uma cópia (.corrompido) em vez de apagar."""
     try:
         with open(caminho, encoding="utf-8") as f:
-            return json.load(f)
+            dados = json.load(f)
+        if isinstance(dados, type(padrao)):
+            return dados
+        raise ValueError("tipo inesperado")
+    except FileNotFoundError:
+        return padrao
     except Exception:
+        try:
+            os.replace(caminho, caminho + ".corrompido")
+        except OSError:
+            pass
         return padrao
 
 
 def _grava_json(caminho, dados):
+    """Grava com segurança (arquivo temporário + troca). Devolve True se deu certo."""
     try:
         os.makedirs(PASTA_DADOS, exist_ok=True)
         tmp = caminho + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(dados, f, ensure_ascii=False)
         os.replace(tmp, caminho)
+        return True
     except Exception:
-        pass
+        return False
+
+
+def _carrega():
+    global _cfg
+    if _cfg is None:
+        _cfg = _le_json(CONFIG, {})
+        if "margem_direita" in _cfg:                       # versão 1.0 guardava uma margem só
+            _cfg.setdefault("margens", {})["principal"] = _cfg.pop("margem_direita")
+    return _cfg
 
 
 def config():
-    """Cópia da configuração atual (com os valores padrão preenchidos)."""
-    global _cfg
+    """Cópia da configuração atual (com os valores padrão preenchidos). Pode ser alterada à vontade."""
     with trava:
-        if _cfg is None:
-            _cfg = _le_json(CONFIG, {})
-            if "margem_direita" in _cfg:                       # versão 1.0 guardava uma margem só
-                _cfg.setdefault("margens", {})["principal"] = _cfg.pop("margem_direita")
-        return {**PADRAO, **json.loads(json.dumps(_cfg))}
+        return copy.deepcopy({**PADRAO, **_carrega()})
 
 
 def muda_config(**valores):
     global _cfg_sujo
     with trava:
-        config()
-        _cfg.update(valores)
+        _carrega().update(valores)
         _cfg_sujo = True
     salva()
 
 
 def salva():
-    """Grava no disco o que mudou (config e histórico)."""
+    """Grava no disco o que mudou (config e histórico). Se a gravação falhar, tenta de novo na próxima."""
     global _cfg_sujo, _hist_sujo
-    with trava:
-        cfg = json.loads(json.dumps(_cfg)) if _cfg_sujo and _cfg is not None else None
-        hist = json.loads(json.dumps(_hist)) if _hist_sujo and _hist is not None else None
-        _cfg_sujo = _hist_sujo = False
-    if cfg is not None:
-        _grava_json(CONFIG, cfg)
-    if hist is not None:
-        _grava_json(HISTORICO, hist)
+    with _trava_disco:
+        with trava:
+            cfg = copy.deepcopy(_cfg) if _cfg_sujo and _cfg is not None else None
+            hist = copy.deepcopy(_hist) if _hist_sujo and _hist is not None else None
+            _cfg_sujo = _hist_sujo = False
+        falhou_cfg = cfg is not None and not _grava_json(CONFIG, cfg)
+        falhou_hist = hist is not None and not _grava_json(HISTORICO, hist)
+        if falhou_cfg or falhou_hist:
+            with trava:
+                _cfg_sujo = _cfg_sujo or falhou_cfg
+                _hist_sujo = _hist_sujo or falhou_hist
 
 
 # ---------- leituras ----------
@@ -95,11 +116,26 @@ def atualiza(chave, nome, tipo, nivel, carregando=False, origem=""):
     with trava:
         estado[chave] = dict(nome=nome, tipo=tipo, nivel=nivel, carregando=bool(carregando),
                              visto=time.time(), origem=origem)
-        config()
-        if _cfg.setdefault("conhecidos", {}).get(chave) != {"nome": nome, "tipo": tipo}:
-            _cfg["conhecidos"][chave] = {"nome": nome, "tipo": tipo}
+        conhecidos = _carrega().setdefault("conhecidos", {})
+        if conhecidos.get(chave) != {"nome": nome, "tipo": tipo}:
+            conhecidos[chave] = {"nome": nome, "tipo": tipo}
             _cfg_sujo = True
         _registra(chave, nivel, bool(carregando))
+
+
+def esquece(chave):
+    """Tira um periférico da lista dos Ajustes (e do histórico). Se ele voltar a ligar, aparece de novo."""
+    global _cfg_sujo, _hist_sujo
+    with trava:
+        cfg = _carrega()
+        cfg.get("conhecidos", {}).pop(chave, None)
+        for lista in ("ordem", "ocultos"):
+            if chave in cfg.get(lista, []):
+                cfg[lista] = [k for k in cfg[lista] if k != chave]
+        if _hist and _hist.pop(chave, None) is not None:
+            _hist_sujo = True
+        _cfg_sujo = True
+    salva()
 
 
 def some(chave):
@@ -125,7 +161,7 @@ def instantaneo():
 
 
 # ---------- histórico e previsão ----------
-DIAS_HISTORICO = 14
+DIAS_HISTORICO = 30
 
 
 def _registra(chave, nivel, carregando):
@@ -145,36 +181,73 @@ def _registra(chave, nivel, carregando):
     _hist_sujo = True
 
 
+LACUNA = 30 * 60      # mais de 30 min sem ponto = programa fechado / PC desligado: não conta esse tempo
+
+
+def ritmo(pontos, carregando):
+    """% por hora de uso, somando todos os trechos do histórico (todas as cargas, não só a atual).
+
+    Corta o histórico em trechos: na troca carregando/na bateria, quando a % anda no sentido
+    contrário (outra carga) e nas lacunas em que o programa estava fechado. Devolve (ritmo, horas)
+    ou (None, horas) se ainda há pouco dado.
+    """
+    sinal = 1 if carregando else -1
+    trechos, atual = [], []
+    for p in pontos:
+        if bool(p[2]) != carregando:
+            atual and trechos.append(atual)
+            atual = []
+            continue
+        if atual:
+            dt = p[0] - atual[-1][0]
+            salto = (p[1] - atual[-1][1]) * -sinal        # andou no sentido contrário
+            if dt > LACUNA or salto >= 8:                 # PC desligado ou outra carga
+                trechos.append(atual)
+                atual = []
+        atual.append(p)
+    atual and trechos.append(atual)
+
+    variacao, horas = 0.0, 0.0          # variacao = quanto a % andou no total (em pontos percentuais)
+    for t in trechos:
+        dur = (t[-1][0] - t[0][0]) / 3600
+        if len(t) < 3 or dur < 1 / 6:
+            continue
+        # tendência (mínimos quadrados): as oscilações de ±2–4% que alguns aparelhos têm se anulam
+        xs = [(p[0] - t[0][0]) / 3600 for p in t]
+        ys = [p[1] for p in t]
+        mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+        den = sum((x - mx) ** 2 for x in xs)
+        if not den:
+            continue
+        inclinacao = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / den * sinal
+        if inclinacao <= 0:
+            continue
+        variacao += inclinacao * dur
+        horas += dur
+    minimo_h = 0.25 if carregando else 1
+    if horas >= minimo_h and variacao >= 3:
+        return variacao / horas, horas
+    return None, horas
+
+
 def previsao(chave):
-    """Texto como 'Restam ≈ 2 dias' ou 'Cheio em ≈ 40 min', ou None se ainda não dá para prever."""
+    """Texto como 'Restam ≈ 2 dias de uso' ou 'Cheio em ≈ 40 min', ou None se ainda não dá para prever.
+
+    Usa o ritmo médio aprendido em todo o histórico (até 30 dias), então a previsão continua
+    valendo depois de recarregar o periférico ou reiniciar o PC.
+    """
     with trava:
         pontos = list((_hist or {}).get(chave, []))
         atual = estado.get(chave)
     if not atual or len(pontos) < 2:
         return None
     carregando = atual["carregando"]
-    # pega o trecho atual (descarregando ou carregando) andando para trás no histórico
-    trecho = [pontos[-1]]
-    for p in reversed(pontos[:-1]):
-        anterior = trecho[-1]
-        if bool(p[2]) != carregando:
-            break
-        if anterior[0] - p[0] > 6 * 3600 and carregando:     # carga não fica 6 h parada
-            break
-        if not carregando and p[1] < anterior[1] - 1:        # bateria subiu: começou outro ciclo
-            break
-        if carregando and p[1] > anterior[1] + 1:
-            break
-        trecho.append(p)
-    inicio, fim = trecho[-1], trecho[0]
-    horas = (fim[0] - inicio[0]) / 3600
-    variacao = (inicio[1] - fim[1]) if not carregando else (fim[1] - inicio[1])
-    if horas < (0.25 if carregando else 1) or variacao < 3:
+    por_hora, _ = ritmo(pontos, carregando)
+    if not por_hora:
         return None
-    por_hora = variacao / horas
     falta = (atual["nivel"] if not carregando else 100 - atual["nivel"]) / por_hora
     texto = _duracao(falta)
-    return f"Cheio em ≈ {texto}" if carregando else f"Restam ≈ {texto}"
+    return f"Cheio em ≈ {texto}" if carregando else f"Restam ≈ {texto} de uso"
 
 
 def _duracao(horas):

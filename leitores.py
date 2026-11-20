@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import time
+import traceback
 import uuid
 from ctypes import wintypes as wt
 
@@ -54,18 +55,18 @@ def le_attack_shark():
                 # o programa não precisa (nem deve) ver teclas
                 if d["interface_number"] == 2 and (d["usage_page"] == 0x0A or d["usage_page"] >= 0xFF00):
                     try:
-                        h = _abre(d["path"])
-                        h.set_nonblocking(1)
-                        abertos.append(h)
+                        abertos.append(_abre(d["path"]))
                     except Exception:
                         pass
             ultimo = 0
             while abertos and not nucleo.parar.is_set():
+                espera_ms = max(50, 500 // len(abertos))       # o quadro chega a cada ~2 s: espera em vez de girar
                 for h in list(abertos):
                     try:
-                        r = h.read(64)
+                        r = h.read(64, espera_ms)
                     except Exception:
                         abertos.remove(h)
+                        _fecha(h)                              # receptor desligado: solta o handle
                         continue
                     if r and len(r) >= 5 and r[0] == 0x03 and r[2] == 0x40 and r[4] <= 100 and r[3] in (1, 3):
                         atualiza("x11", "Mouse Attack Shark X11", "mouse", r[4], r[3] == 3, "receptor 2,4 GHz")
@@ -73,7 +74,6 @@ def le_attack_shark():
                 if ultimo and time.time() - ultimo > X11_DORMINDO:
                     some("x11")
                     ultimo = 0
-                time.sleep(0.05)
         finally:
             _fecha(*abertos)
         some("x11")
@@ -234,14 +234,20 @@ TENSAO = [(4186, 100), (4067, 90), (3989, 80), (3922, 70), (3859, 60), (3811, 50
 
 def _hidpp(longo, curto, aparelho, indice, funcao, params=b"", espera_s=0.4):
     pedido = (funcao << 4) | SWID
-    longo.write(bytes([0x11, aparelho, indice, pedido]) + bytes(params).ljust(16, b"\0"))
+    if longo is not None:                       # mensagem longa: 11 <aparelho> <índice> <função> + 16 bytes
+        pacote = bytes([0x11, aparelho, indice, pedido]) + bytes(params).ljust(16, b"\0")
+        escritor = longo
+    else:                                       # aparelho só com canal curto: 10 <aparelho> <índice> <função> + 3 bytes
+        pacote = bytes([0x10, aparelho, indice, pedido]) + bytes(params)[:3].ljust(3, b"\0")
+        escritor = curto
+    escritor.write(pacote)
     fim = time.time() + espera_s
     while time.time() < fim:
         for h in (longo, curto):
             if h is None:
                 continue
             r = h.read(20, 20)
-            if not r or len(r) < 4 or r[1] != aparelho:
+            if not r or len(r) < 5 or r[1] != aparelho:
                 continue
             if r[2] == 0xFF and r[3] == indice and r[4] == pedido:        # erro HID++ 2.0
                 return None
@@ -250,6 +256,17 @@ def _hidpp(longo, curto, aparelho, indice, funcao, params=b"", espera_s=0.4):
             if r[2] == indice and r[3] == pedido:
                 return bytes(r[4:])
     return None
+
+
+def _ping(longo, curto, aparelho):
+    """O aparelho está ligado e fala HID++ 2.0? (mesma pergunta do Solaar: raiz, função 1, resposta em ~100 ms)."""
+    return _hidpp(longo, curto, aparelho, 0x00, 1, b"\x00\x00\x5a", 0.15) is not None
+
+
+def _carga(status):
+    """(carregando, cheio) pelo código de status do HID++ (tabela do Solaar):
+    0 descarregando, 1 carregando, 2 quase cheio, 3 carga completa, 4 carga lenta, 5+ erro."""
+    return status in (1, 2, 4), status == 3
 
 
 def _indice(longo, curto, aparelho, recurso):
@@ -275,11 +292,13 @@ def _bateria_logi(longo, curto, aparelho, recursos):
         r = _hidpp(longo, curto, aparelho, recursos[0x1004], 1)
         if r:
             nivel = r[0] or {8: 100, 4: 60, 2: 20, 1: 5}.get(r[1] & 0x0F, 0)
-            return nivel, r[2] in (1, 2)
+            carregando, cheio = _carga(r[2])
+            return (100 if cheio else nivel), carregando or cheio
     if recursos.get(0x1000):                       # Battery Level Status
         r = _hidpp(longo, curto, aparelho, recursos[0x1000], 0)
         if r:
-            return r[0], r[2] in (1, 2)
+            carregando, cheio = _carga(r[2])
+            return (100 if cheio else r[0]), carregando or cheio
     if recursos.get(0x1001):                       # Battery Voltage
         r = _hidpp(longo, curto, aparelho, recursos[0x1001], 0)
         if r:
@@ -300,26 +319,32 @@ def le_logitech():
         try:
             grupos = {}
             for d in hid.enumerate(0x046D, 0):
-                if d["usage_page"] == 0xFF00 and d["usage"] in (1, 2):
+                if d["usage_page"] == 0xFF00 and d["usage"] in (1, 2):   # canais HID++ do fabricante (nunca teclas)
                     chave_usb = (d["product_id"], d["serial_number"], d["interface_number"])
                     grupos.setdefault(chave_usb, {})[d["usage"]] = d["path"]
             for (pid, _, _), caminhos in grupos.items():
-                if 2 not in caminhos:
-                    continue
                 longo = curto = None
                 try:
-                    longo = _abre(caminhos[2])
+                    if 2 in caminhos:
+                        longo = _abre(caminhos[2])
                     if 1 in caminhos:
                         try:
                             curto = _abre(caminhos[1])
                         except Exception:
                             curto = None
+                    if longo is None and curto is None:
+                        continue
+                    base = caminhos.get(2) or caminhos.get(1)
                     for aparelho in (0xFF, 1, 2, 3, 4, 5, 6):
-                        ck = (caminhos[2], aparelho)
+                        ck = (base, aparelho)
                         info = cache.get(ck)
                         if info is None and ck in cache and time.time() - cache.get(("t",) + ck, 0) < 300:
                             continue              # não respondeu há pouco: tenta de novo em 5 min
                         if info is None:
+                            if not _ping(longo, curto, aparelho):      # desligado ou vazio: não gasta tempo
+                                cache[ck] = None
+                                cache[("t",) + ck] = time.time()
+                                continue
                             recursos = {f: _indice(longo, curto, aparelho, f) for f in (0x1004, 0x1000, 0x1001)}
                             if not any(recursos.values()):
                                 cache[ck] = None
@@ -351,60 +376,102 @@ def le_logitech():
 
 
 # =====================================================================================
-# Razer: relatório de 90 bytes (classe 0x07: 0x80 = bateria 0-255, 0x84 = carregando),
-# o mesmo do OpenRazer e do razer-battery-report. Mouses e teclados sem fio.
+# Razer: relatório de recurso de 90 bytes (classe 0x07: 0x80 = bateria 0-255, 0x84 = carregando),
+# o mesmo do OpenRazer. A tabela PID -> (transação, interface, espera) vem do catálogo do
+# razer-battery-report (xzeldon, licença MIT, a partir do OpenRazer). Só pergunta para modelos
+# da tabela: nada de adivinhar IDs. Mouses sem fio. NÃO TESTADO em aparelho real.
 # =====================================================================================
-TRANSACOES_RAZER = (0x1F, 0x3F, 0xFF, 0x9F)
+RAZER = {}
 
 
-def _razer(h, transacao, classe, comando):
-    pacote = bytearray(90)
-    pacote[1], pacote[5], pacote[6], pacote[7] = transacao, 0x02, classe, comando
+def _grupo(tid, interface, espera_ms, *pids):
+    for p in pids:
+        RAZER[p] = (tid, interface, espera_ms)
+
+
+_grupo(0xFF, 0, 0.6, 0x001F, 0x0024, 0x0025, 0x0032, 0x003E, 0x003F, 0x0044, 0x0045)
+_grupo(0x3F, 0, 0.6, 0x0059, 0x005A)
+_grupo(0x1F, 0, 0.6, 0x008F)
+_grupo(0x1F, 0, 400, 0x0062, 0x0094, 0x0095)                        # Atheris, Orochi V2: respondem devagar
+_grupo(0x3F, 0, 31, 0x0072, 0x0073)
+_grupo(0xFF, 0, 31, 0x0083)
+_grupo(0xFF, 0, 59.9, 0x007A, 0x007B)
+_grupo(0x3F, 0, 59.9, 0x007C, 0x007D)
+_grupo(0x1F, 0, 59.9, 0x009E, 0x009F, 0x00B3, 0x00B8, 0x00C1, 0x00DF)
+_grupo(0x1F, 3, 59.9, 0x00E2, 0x00E3, 0x00E5, 0x00E6)                # Basilisk V4 Pro, Viper V4 Pro: interface 3
+_grupo(0x1F, 0, 31, 0x006F, 0x0070, 0x0077, 0x0080, 0x0086, 0x0088, 0x0090, 0x009A, 0x009C, 0x00A5, 0x00A6,
+       0x00A7, 0x00A8, 0x00AA, 0x00AB, 0x00AF, 0x00B0, 0x00B4, 0x00B6, 0x00B7, 0x00B9, 0x00BE, 0x00BF, 0x00C0,
+       0x00C2, 0x00C3, 0x00C4, 0x00C5, 0x00C7, 0x00C8, 0x00CC, 0x00CD, 0x00D0, 0x00D1, 0x00D3, 0x00D4, 0x00D6,
+       0x00D7, 0x00DA, 0x00DB, 0x00DE)
+
+RAZER_TENTATIVAS, RAZER_PAUSA = 5, 0.01          # como o OpenRazer: até 5 tentativas, 10 ms entre elas
+
+
+def _crc_razer(pacote):
     crc = 0
     for b in pacote[2:88]:
         crc ^= b
-    pacote[88] = crc
-    h.send_feature_report(bytes([0x00]) + bytes(pacote))
-    time.sleep(0.06)
-    r = bytes(h.get_feature_report(0x00, 91))
-    if len(r) == 91:
+    return crc
+
+
+def _razer(h, tid, espera_ms, classe, comando):
+    """Uma pergunta ao aparelho. Devolve o relatório de resposta (status 0x02) ou None.
+
+    Repete se estiver ocupado (0x01) ou sem resposta (0x04); para na hora se não suporta (0x05)
+    ou falhou (0x03). Confere o CRC e se a resposta é mesmo desta pergunta.
+    """
+    pacote = bytearray(90)
+    pacote[1], pacote[5], pacote[6], pacote[7] = tid, 0x02, classe, comando
+    pacote[88] = _crc_razer(pacote)
+    for tentativa in range(RAZER_TENTATIVAS):
+        if tentativa:
+            time.sleep(RAZER_PAUSA)
+        h.send_feature_report(bytes([0x00]) + bytes(pacote))
+        time.sleep(espera_ms / 1000)
+        r = bytes(h.get_feature_report(0x00, 91))
+        if len(r) != 91:
+            continue
         r = r[1:]
-    if len(r) >= 90 and r[6] == classe and r[7] == comando:
-        return r
+        if r[88] != _crc_razer(r) or r[2:4] != pacote[2:4] or r[6] != classe or r[7] != comando:
+            continue                                  # resposta de outra coisa: tenta de novo
+        if r[0] == 0x02:
+            return r
+        if r[0] in (0x03, 0x05):                      # falhou / não suportado: repetir não adianta
+            return None
     return None
 
 
 def le_razer():
-    transacao_por_pid = {}
     while True:
         vistos = set()
         try:
             feitos = set()
             for d in hid.enumerate(0x1532, 0):
                 pid = d["product_id"]
-                if pid in feitos or d["interface_number"] not in (0, -1):
+                if pid in feitos or pid not in RAZER:
+                    continue
+                tid, interface, espera_ms = RAZER[pid]
+                if d["interface_number"] not in ((interface,) if interface else (0, -1)):
+                    continue
+                # só a coleção do mouse (página 1, uso 2) ou do fabricante: nunca a de teclado nem a de mídia
+                if not ((d["usage_page"] == 0x01 and d["usage"] == 0x02) or d["usage_page"] >= 0xFF00):
                     continue
                 h = None
                 try:
                     h = _abre(d["path"])
-                    for t in ([transacao_por_pid[pid]] if pid in transacao_por_pid else TRANSACOES_RAZER):
-                        r = _razer(h, t, 0x07, 0x80)
-                        if r is None:
-                            continue
-                        feitos.add(pid)
-                        if r[0] != 0x02:          # 0x04 = aparelho dormindo/desligado
-                            break
-                        transacao_por_pid[pid] = t
-                        nivel = round(r[9] * 100 / 255)
-                        c = _razer(h, t, 0x07, 0x84)
-                        carregando = bool(c and c[0] == 0x02 and c[9])
-                        nome = (d.get("product_string") or "Razer").strip()
-                        chave = f"rz{pid:04x}"
-                        atualiza(chave, nome if nome.lower().startswith("razer") else "Razer " + nome,
-                                 tipo_pelo_nome(nome) if tipo_pelo_nome(nome) != "bluetooth" else "mouse",
-                                 nivel, carregando, "Razer")
-                        vistos.add(chave)
-                        break
+                    r = _razer(h, tid, espera_ms, 0x07, 0x80)
+                    if r is None:                     # dormindo/desligado ou esta coleção não responde
+                        continue
+                    feitos.add(pid)
+                    nivel = round(r[9] * 100 / 255)
+                    c = _razer(h, tid, espera_ms, 0x07, 0x84)
+                    carregando = bool(c and c[9])
+                    nome = (d.get("product_string") or "Razer").strip()
+                    chave = f"rz{pid:04x}"
+                    atualiza(chave, nome if nome.lower().startswith("razer") else "Razer " + nome,
+                             tipo_pelo_nome(nome) if tipo_pelo_nome(nome) != "bluetooth" else "mouse",
+                             nivel, carregando, "Razer")
+                    vistos.add(chave)
                 except Exception:
                     pass
                 finally:
@@ -440,8 +507,12 @@ def interpreta_headsetcontrol(texto):
         if status not in ("BATTERY_AVAILABLE", "BATTERY_CHARGING"):
             continue
         nivel = bat.get("level", -1)
-        if not isinstance(nivel, int) or nivel < 0:
+        if not isinstance(nivel, int):
             continue
+        if nivel < 0:
+            if status != "BATTERY_CHARGING":
+                continue
+            nivel = None                     # carregando e o headset não diz quanto: o chamador reaproveita o último
         nome = (d.get("device") or d.get("product") or "Headset").strip()
         chave = f"hc{d.get('id_vendor', '')}{d.get('id_product', '')}"
         saida.append((chave, nome, nivel, status == "BATTERY_CHARGING", str(d.get("id_vendor", "")).lower()))
@@ -455,12 +526,17 @@ def le_headsetcontrol():
     while True:
         vistos = set()
         try:
-            r = subprocess.run([exe, "-b", "-o", "json"], capture_output=True, text=True, timeout=20,
-                               creationflags=SEM_JANELA)
-            for chave, nome, nivel, carregando, vendor in interpreta_headsetcontrol(r.stdout):
+            r = subprocess.run([exe, "-b", "-o", "json"], capture_output=True, encoding="utf-8", errors="replace",
+                               timeout=20, creationflags=SEM_JANELA)
+            for chave, nome, nivel, carregando, vendor in interpreta_headsetcontrol(r.stdout or ""):
                 # Corsair já vem pelo iCUE quando ele está aberto: não mostra duas vezes
                 if vendor in ("0x1b1c", "1b1c") and any(k.startswith("cue") for k in nucleo.instantaneo()):
                     continue
+                if nivel is None:
+                    anterior = nucleo.instantaneo().get(chave)
+                    if not anterior:
+                        continue
+                    nivel = anterior["nivel"]
                 atualiza(chave, nome, "headset", nivel, carregando, "HeadsetControl")
                 vistos.add(chave)
         except Exception:
@@ -470,4 +546,22 @@ def le_headsetcontrol():
             return
 
 
-LEITORES = [le_attack_shark, le_corsair, le_bluetooth, le_logitech, le_razer, le_headsetcontrol]
+def _resiliente(leitor):
+    """Se um leitor der erro, anota no erros.log e tenta de novo (30 s, depois 1, 2, 4, 8 e 10 min)."""
+    def roda():
+        pausa = 30
+        while not nucleo.parar.is_set():
+            try:
+                leitor()
+                return                       # terminou de propósito (sem SDK, sem headsetcontrol, programa fechando)
+            except Exception:
+                traceback.print_exc()
+                if espera(pausa):
+                    return
+                pausa = min(600, pausa * 2)
+    roda.__name__ = leitor.__name__
+    return roda
+
+
+LEITORES = [_resiliente(f) for f in (le_attack_shark, le_corsair, le_bluetooth, le_logitech, le_razer,
+                                     le_headsetcontrol)]

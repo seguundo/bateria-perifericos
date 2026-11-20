@@ -20,7 +20,7 @@ O que mudou em cada versão: [Notas de atualização](NOTAS-DE-ATUALIZACAO.md).
 |---|---|
 | Qualquer aparelho **Bluetooth** que informe bateria ao Windows (controle Xbox, fones, mouses e teclados BLE) | Direto do Windows |
 | **Logitech** (Lightspeed, Unifying, Bolt ou cabo) | HID++ direto no receptor, sem G HUB |
-| **Razer** (mouses e teclados sem fio) | Direto pelo USB, sem Synapse |
+| **Razer** (mouses sem fio; 72 modelos da lista do razer-battery-report) | Direto pelo USB, sem Synapse |
 | Headsets e periféricos **Corsair** | iCUE SDK (o iCUE precisa estar aberto) |
 | Headsets **SteelSeries, HyperX, Logitech, Roccat** e outros | [HeadsetControl](https://github.com/Sapd/HeadsetControl): coloque o `headsetcontrol.exe` na pasta do programa |
 | Mouse **Attack Shark X11** (receptor 2.4G `1D57:FA60`) | Direto do receptor, sem o app da marca |

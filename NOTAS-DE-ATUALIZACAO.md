@@ -1,5 +1,28 @@
 # Notas de atualização
 
+## 1.2.1 (20/11/2026): correções e revisão de código
+
+### Abre junto com o Windows (correção importante)
+- O programa não abria sozinho ao ligar o PC. Agora o "Iniciar com o Windows" usa um atalho na pasta Inicializar (aparece em Configurações > Aplicativos > Inicialização) e o programa espera 10 s para a barra de tarefas, o Bluetooth e o iCUE terminarem de carregar. As versões antigas migram sozinhas.
+- Novo arquivo `erros.log` (em `%APPDATA%\BateriaPerifericos`): se algo der errado, fica anotado em vez de sumir calado.
+
+### Previsão de duração
+- Antes, a previsão recomeçava do zero a cada recarga ou reinício. Agora o programa guarda o ritmo de uso de cada periférico (30 dias de histórico) e a previsão aparece logo ("Restam ≈ 22 h de uso"). O histórico é gravado a cada minuto e quando o Windows desliga.
+
+### Revisão do código (22 pontos)
+- **Ajustes não se perdem mais:** várias partes do programa gravavam ao mesmo tempo e, no teste, a maioria das gravações falhava sem aviso. Agora há uma trava única e uma nova tentativa se falhar. Arquivo de ajustes corrompido vira `.corrompido` em vez de ser apagado.
+- **Mouse Attack Shark X11:** o leitor não para mais se der erro (reinicia sozinho) e solta a conexão do receptor ao desligar.
+- **Razer:** só pergunta para modelos da lista do razer-battery-report (72, incluindo Basilisk V4 Pro e Viper V4 Pro), com a interface e o tempo de espera certos, repete se o aparelho estiver ocupado, confere a resposta e só abre o canal do mouse (nunca o do teclado). Ainda não testado em aparelho real.
+- **Logitech:** reconhece "carga completa" e "carga lenta" (o aviso de carga completa agora dispara), aceita aparelhos que só têm o canal curto e verifica se o aparelho está ligado antes de perguntar (acaba a espera de ~7 s com mouse de cabo).
+- **HeadsetControl:** nomes com acento não derrubam mais a leitura, e headsets que não informam a % durante a carga mantêm a última.
+- **Antivírus:** o atalho de inicialização e o ícone das notificações só são regravados quando mudam (antes, a cada boot).
+- **Menos processador:** de ~0,9% para ~0,2% de um núcleo (o receptor do X11 deixou de ser lido 20 vezes por segundo, a faixa só é redesenhada quando muda e não briga mais com janelas do sistema que ficam por cima).
+- **Faixa:** nunca sai da barra ao arrastar; some na hora em jogo de tela cheia (usa o aviso oficial do Windows) e não pisca por cima dele; esconde quando a barra está em "ocultar automaticamente".
+- **Menu:** fecha ao clicar fora; nomes com "&" aparecem certos.
+- **Ajustes:** botão **Esquecer** para periféricos desligados; não fecha mais o programa em casos raros de memória do Tk.
+- **Segurança de código:** declarações de tipos que faltavam nas chamadas do Windows (64 bits), recursos de desenho liberados mesmo se der erro e o "uma cópia só" criado antes de tocar no arquivo de registro.
+- **Testes:** novo `testes.py` (14 testes com aparelho de mentira e pasta temporária; não toca nos seus dados).
+
 ## 1.2.0 (18/11/2026): acabamento visual
 
 Ajustes da revisão visual, para o programa parecer de fábrica do Windows 11.

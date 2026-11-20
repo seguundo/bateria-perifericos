@@ -1,5 +1,6 @@
 """Janela de Ajustes (tkinter + tema sv-ttk, que imita o Windows 11). Roda numa thread própria."""
 import ctypes
+import gc
 import os
 import threading
 import tkinter as tk
@@ -9,7 +10,6 @@ from tkinter import ttk
 import nucleo
 
 _aberta = threading.Lock()
-ORDEM_TIPO = {"headset": 0, "mouse": 1, "teclado": 2, "controle": 3, "bluetooth": 4}
 TAMANHOS = {"Pequeno": 0.85, "Normal": 1.0, "Grande": 1.2}
 
 
@@ -21,8 +21,11 @@ def abre():
 
 def _janela():
     try:
-        Ajustes().raiz.mainloop()
+        janela = Ajustes()
+        janela.raiz.mainloop()
+        del janela
     finally:
+        gc.collect()          # solta os objetos do Tk nesta thread (evita "Tcl_AsyncDelete" se outra thread os coletar)
         _aberta.release()
 
 
@@ -101,7 +104,7 @@ class Ajustes:
             conhecidos.setdefault(k, {"nome": v["nome"], "tipo": v["tipo"]})
         ordem = cfg["ordem"]
         self.chaves = sorted(conhecidos, key=lambda k: (ordem.index(k) if k in ordem else len(ordem),
-                                                        ORDEM_TIPO.get(conhecidos[k]["tipo"], 9),
+                                                        nucleo.ORDEM_TIPO.get(conhecidos[k]["tipo"], 9),
                                                         conhecidos[k]["nome"]))
         self.conhecidos = conhecidos
         self.visivel = {k: tk.BooleanVar(value=k not in cfg["ocultos"]) for k in self.chaves}
@@ -171,10 +174,20 @@ class Ajustes:
             desce = ttk.Button(self.lista, text="↓", width=3, command=lambda i=i: self.move(i, 1))
             sobe.grid(row=i, column=2, padx=(12, 4), pady=1)
             desce.grid(row=i, column=3, pady=1)
+            if k not in online:                      # só dá para esquecer o que está desligado
+                ttk.Button(self.lista, text="Esquecer", width=9, command=lambda k=k: self.esquece(k)).grid(
+                    row=i, column=4, padx=(8, 0), pady=1)
             if i == 0:
                 sobe.state(["disabled"])
             if i == ultimo:
                 desce.state(["disabled"])
+
+    def esquece(self, chave):
+        nucleo.esquece(chave)
+        self.chaves = [k for k in self.chaves if k != chave]
+        self.conhecidos.pop(chave, None)
+        self.visivel.pop(chave, None)
+        self.desenha_lista()
 
     def move(self, i, passo):
         j = i + passo
