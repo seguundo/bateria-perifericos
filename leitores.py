@@ -12,7 +12,6 @@ import json
 import os
 import subprocess
 import time
-import traceback
 import uuid
 from ctypes import wintypes as wt
 
@@ -108,7 +107,7 @@ def le_corsair():
                              int(prop.value), False, "iCUE")
                     vistos.add(chave)
         except Exception:
-            pass
+            nucleo.erro("Corsair")
         some_todos("cue", vistos)
         if espera(60):
             return
@@ -215,7 +214,7 @@ def le_bluetooth():
                 atualiza(chave, nome, tipo_pelo_nome(nome), nivel, False, "Bluetooth")
                 vistos.add(chave)
         except Exception:
-            pass
+            nucleo.erro("Bluetooth")
         some_todos("bt", vistos)
         if espera(10):           # leitura nativa é leve: confere a cada 10 s
             return
@@ -263,9 +262,12 @@ def _ping(longo, curto, aparelho):
     return _hidpp(longo, curto, aparelho, 0x00, 1, b"\x00\x00\x5a", 0.15) is not None
 
 
-def _carga(status):
-    """(carregando, cheio) pelo código de status do HID++ (tabela do Solaar):
-    0 descarregando, 1 carregando, 2 quase cheio, 3 carga completa, 4 carga lenta, 5+ erro."""
+def _carga(status, unificada=False):
+    """(carregando, cheio) pelo código de status do HID++ (tabelas do Solaar).
+    0x1000: 0 descarregando, 1 carregando, 2 quase cheio, 3 completa, 4 carga lenta, 5+ erro.
+    0x1004: 0 descarregando, 1 carregando, 2 carga lenta, 3 completa, 4+ erro."""
+    if unificada:
+        return status in (1, 2), status == 3
     return status in (1, 2, 4), status == 3
 
 
@@ -292,7 +294,7 @@ def _bateria_logi(longo, curto, aparelho, recursos):
         r = _hidpp(longo, curto, aparelho, recursos[0x1004], 1)
         if r:
             nivel = r[0] or {8: 100, 4: 60, 2: 20, 1: 5}.get(r[1] & 0x0F, 0)
-            carregando, cheio = _carga(r[2])
+            carregando, cheio = _carga(r[2], unificada=True)
             return (100 if cheio else nivel), carregando or cheio
     if recursos.get(0x1000):                       # Battery Level Status
         r = _hidpp(longo, curto, aparelho, recursos[0x1000], 0)
@@ -365,11 +367,11 @@ def le_logitech():
                         atualiza(chave, info["nome"], info["tipo"], leitura[0], leitura[1], "receptor Logitech")
                         vistos.add(chave)
                 except Exception:
-                    pass
+                    nucleo.erro(f"Logitech {pid:04x}")
                 finally:
                     _fecha(longo, curto)
         except Exception:
-            pass
+            nucleo.erro("Logitech")
         some_todos("logi", vistos)
         if espera(60):
             return
@@ -473,11 +475,11 @@ def le_razer():
                              nivel, carregando, "Razer")
                     vistos.add(chave)
                 except Exception:
-                    pass
+                    nucleo.erro(f"Razer {pid:04x}")
                 finally:
                     _fecha(h)
         except Exception:
-            pass
+            nucleo.erro("Razer")
         some_todos("rz", vistos)
         if espera(60):
             return
@@ -540,7 +542,7 @@ def le_headsetcontrol():
                 atualiza(chave, nome, "headset", nivel, carregando, "HeadsetControl")
                 vistos.add(chave)
         except Exception:
-            pass
+            nucleo.erro("HeadsetControl")
         some_todos("hc", vistos)
         if espera(60):
             return
@@ -555,7 +557,7 @@ def _resiliente(leitor):
                 leitor()
                 return                       # terminou de propósito (sem SDK, sem headsetcontrol, programa fechando)
             except Exception:
-                traceback.print_exc()
+                nucleo.erro(f"leitor {leitor.__name__} (vai tentar de novo em {pausa} s)")
                 if espera(pausa):
                     return
                 pausa = min(600, pausa * 2)

@@ -158,6 +158,40 @@ class TestaLeitores(unittest.TestCase):
         self.assertEqual([(n, nivel, c) for _, n, nivel, c, _ in lista], [("A", None, True), ("C é ç", 55, False)])
 
 
+class TestaVersao122(unittest.TestCase):
+    def setUp(self):
+        zera()
+
+    def test_sem_previsao_de_carga_quando_ja_esta_cheio(self):
+        agora = time.time()
+        nucleo._hist = {"m": [[int(agora - 3600 + i * 600), 40 + i * 10, 1] for i in range(7)]}
+        nucleo.estado["m"] = dict(nome="M", tipo="mouse", nivel=100, carregando=True, visto=agora, origem="")
+        self.assertIsNone(nucleo.previsao("m"))
+
+    def test_duracao_arredonda_para_1_h(self):
+        self.assertEqual(nucleo._duracao(0.99), "1 h")
+        self.assertEqual(nucleo._duracao(0.5), "30 min")
+
+    def test_leitura_velha_sai_da_barra(self):
+        nucleo.atualiza("a", "A", "mouse", 50)
+        nucleo.atualiza("b", "B", "mouse", 60)
+        nucleo.estado["a"]["visto"] -= 600
+        nucleo.expira(300)
+        self.assertEqual(set(nucleo.instantaneo()), {"b"})
+
+    def test_esquece_apaga_historico_mesmo_sem_ter_lido_antes(self):
+        nucleo.atualiza("a", "A", "mouse", 50)
+        nucleo.salva()
+        nucleo._hist = None                     # como logo depois de abrir o programa
+        nucleo.esquece("a")
+        self.assertNotIn("a", lejson(nucleo.HISTORICO))
+
+    def test_logitech_unificada_codigo_4_e_erro_nao_carga(self):
+        self.assertEqual(leitores._carga(4, unificada=True), (False, False))
+        self.assertEqual(leitores._carga(2, unificada=True), (True, False))
+        self.assertEqual(leitores._carga(4), (True, False))
+
+
 class TestaAtalho(unittest.TestCase):
     def test_cria_e_le(self):
         destino = os.path.join(DADOS, "teste.lnk")

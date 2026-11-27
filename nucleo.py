@@ -2,11 +2,13 @@
 import copy
 import json
 import os
+import sys
 import threading
 import time
+import traceback
 
 APP = "Bateria dos Periféricos"
-VERSAO = "1.2.1"
+VERSAO = "1.2.2"
 ORDEM_TIPO = {"headset": 0, "mouse": 1, "teclado": 2, "controle": 3, "bluetooth": 4}
 REPO = "seguundo/bateria-perifericos"          # onde procurar versão nova (troque se fizer um fork)
 PASTA_DADOS = os.path.join(os.environ.get("APPDATA", "."), "BateriaPerifericos")
@@ -126,7 +128,10 @@ def atualiza(chave, nome, tipo, nivel, carregando=False, origem=""):
 def esquece(chave):
     """Tira um periférico da lista dos Ajustes (e do histórico). Se ele voltar a ligar, aparece de novo."""
     global _cfg_sujo, _hist_sujo
+    global _hist
     with trava:
+        if _hist is None:                       # ainda não leu o histórico: lê agora para apagar de verdade
+            _hist = _le_json(HISTORICO, {})
         cfg = _carrega()
         cfg.get("conhecidos", {}).pop(chave, None)
         for lista in ("ordem", "ocultos"):
@@ -148,6 +153,30 @@ def some_todos(prefixo, menos=()):
     with trava:
         for k in [k for k in estado if k.startswith(prefixo) and k not in menos]:
             estado.pop(k, None)
+
+
+def expira(segundos):
+    """Tira da barra leituras velhas (leitor travado ou aparelho que sumiu sem avisar)."""
+    limite = time.time() - segundos
+    with trava:
+        for k in [k for k, v in estado.items() if v["visto"] < limite]:
+            estado.pop(k, None)
+
+
+_erros_vistos = set()
+
+
+def erro(onde):
+    """Anota no erros.log (uma vez por erro diferente) o erro que acabou de acontecer num leitor."""
+    tipo, valor, _ = sys.exc_info()
+    assinatura = (onde, type(valor).__name__, str(valor))
+    if assinatura in _erros_vistos or sys.stderr is None:
+        return
+    _erros_vistos.add(assinatura)
+    try:
+        sys.stderr.write(f"\n[{time.strftime('%d/%m/%Y %H:%M:%S')}] erro em {onde}:\n{traceback.format_exc()}")
+    except Exception:
+        pass
 
 
 def espera(segundos):
@@ -242,6 +271,8 @@ def previsao(chave):
     if not atual or len(pontos) < 2:
         return None
     carregando = atual["carregando"]
+    if (carregando and atual["nivel"] >= 100) or (not carregando and atual["nivel"] <= 0):
+        return None
     por_hora, _ = ritmo(pontos, carregando)
     if not por_hora:
         return None
@@ -251,8 +282,9 @@ def previsao(chave):
 
 
 def _duracao(horas):
-    if horas < 1:
-        return f"{max(5, round(horas * 60 / 5) * 5)} min"
+    minutos = max(5, round(horas * 60 / 5) * 5)
+    if minutos < 60:
+        return f"{minutos} min"
     if horas < 36:
         return f"{round(horas)} h"
     return f"{round(horas / 24)} dias"

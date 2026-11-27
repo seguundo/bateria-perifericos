@@ -1,5 +1,23 @@
 # Notas de atualização
 
+## 1.2.2 (26/11/2026): correções e melhorias
+
+### Correções
+- **Clicar na faixa não a prende mais no lugar:** um clique simples (sem arrastar) gravava a posição, e a faixa parava de acompanhar a setinha `^` quando um ícone novo entrava na bandeja. Agora só grava quando você arrasta de verdade.
+- **Avisos que se atropelavam:** dois avisos ao mesmo tempo (ex.: dois periféricos fracos ao ligar o PC) faziam o Windows trocar um pelo outro antes de dar para ler. Agora avisos do mesmo tipo viram um só, e tipos diferentes aparecem um depois do outro.
+- **% parada na barra:** se um leitor travasse, a última % ficava na barra para sempre. Agora leitura com mais de 5 min sem atualizar sai da barra.
+- **Versão nova:** sem internet logo depois de ligar o PC, o programa só tentava de novo no dia seguinte. Agora tenta de novo em 1 h.
+- **Previsão:** não mostra mais "Cheio em ≈ 5 min" quando já está em 100%, e mostra "1 h" em vez de "60 min".
+- **Esquecer (Ajustes):** apagava o periférico da lista mas, logo depois de abrir o programa, podia deixar o histórico dele no disco.
+- **Logitech:** o código 4 da bateria unificada é erro de carga, não "carga lenta" (não mostra mais o raio por engano).
+- **Erros dos leitores:** antes eram engolidos calados; agora cada erro diferente fica anotado uma vez no `erros.log` (ajuda a consertar Logitech e Razer, que ainda não foram testados com aparelho real).
+
+### Melhorias
+- **Ícone da bandeja:** ao parar o mouse em cima, mostra a % de todos os periféricos (útil quando a faixa está escondida em tela cheia ou em outra tela).
+- **Segundo aviso:** com 5% ("Bateria acabando · vai desligar logo"), além do aviso de bateria fraca.
+- **Dica:** troca de cor na hora quando o Windows muda entre claro e escuro.
+- **Testes:** 19 (5 novos).
+
 ## 1.2.1 (20/11/2026): correções e revisão de código
 
 ### Abre junto com o Windows (correção importante)

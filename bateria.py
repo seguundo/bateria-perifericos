@@ -206,6 +206,7 @@ def procura_versao(app):
     if nucleo.espera(30):
         return
     while True:
+        proxima = 24 * 3600
         if nucleo.config()["procurar_versao"]:
             try:
                 pedido = urllib.request.Request(f"https://api.github.com/repos/{nucleo.REPO}/releases/latest",
@@ -220,8 +221,8 @@ def procura_versao(app):
                         avisa("Versão nova disponível", f"{APP} {tag}. Clique com o botão direito nos ícones da barra.")
                         nucleo.muda_config(versao_avisada=tag)
             except Exception:
-                pass
-        if nucleo.espera(24 * 3600):
+                proxima = 3600                   # sem internet (comum logo após ligar o PC): tenta em 1 h
+        if nucleo.espera(proxima):
             return
 
 
@@ -342,6 +343,7 @@ user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
 user32.DestroyWindow.argtypes = [wt.HWND]
 user32.SetTimer.argtypes = [wt.HWND, ctypes.c_size_t, wt.UINT, ctypes.c_void_p]
 user32.SetTimer.restype = ctypes.c_size_t
+user32.KillTimer.argtypes = [wt.HWND, ctypes.c_size_t]
 user32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
 user32.IsWindowVisible.argtypes = [wt.HWND]
 user32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
@@ -655,6 +657,7 @@ class Faixa:
             return HTCAPTION                       # arrastar com o botão esquerdo
         if msg == WM_ENTERSIZEMOVE:
             self.arrastando = True
+            self.pos_antes = self.pos
             self.app.dica.esconde()
             return 0
         if msg == WM_MOVING:                       # só anda na horizontal
@@ -666,7 +669,8 @@ class Faixa:
             self.arrastando = False
             r = retangulo(hwnd)
             self.pos = (r.left, r.top)
-            if self.barra_rect:
+            # só um clique (sem arrastar) não fixa a posição: a faixa continua acompanhando a bandeja
+            if self.barra_rect and abs(r.left - getattr(self, "pos_antes", self.pos)[0]) >= 2:
                 margens = nucleo.config()["margens"]
                 margens[self.id] = max(0, self.barra_rect[2] - r.right)
                 nucleo.muda_config(margens=margens)
@@ -713,8 +717,9 @@ class Dica:
         if not linhas:
             return self.esconde()
         esc = user32.GetDpiForWindow(faixa.hwnd) / 96 if faixa.hwnd else 1.0
-        if (linhas, centro_x, esc) != self.ultimo or not self.visivel:
-            self.ultimo = (linhas, centro_x, esc)
+        chave_img = (linhas, centro_x, esc, tema_claro())
+        if chave_img != self.ultimo or not self.visivel:
+            self.ultimo = chave_img
             img = desenha_dica(linhas, esc)
             w, h = img.size
             bl, bt, br, bb = faixa.barra_rect
@@ -776,13 +781,30 @@ class Bandeja:
         shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(n))
 
     def mostra_fila(self):
-        while self.fila:
-            titulo, texto = self.fila.pop(0)
+        """Mostra o próximo aviso. Avisos do mesmo tipo juntos viram um só; tipos diferentes vão um
+        de cada vez (6 s entre eles), senão o Windows troca um pelo outro antes de dar para ler."""
+        if not self.fila:
+            return
+        titulo = self.fila[0][0]
+        textos = [t for ti, t in self.fila if ti == titulo]
+        self.fila[:] = [(ti, t) for ti, t in self.fila if ti != titulo]
+        texto = textos[0] if len(textos) == 1 else "\n".join(textos)
+        if self.fila:
+            user32.SetTimer(self.app.ctrl, 3, 6000, None)
+        n = self.dados()
+        n.uFlags = NIF_INFO
+        n.szInfoTitle, n.szInfo = titulo[:63], texto[:255]
+        n.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON
+        n.hBalloonIcon = self.icone_grande
+        shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(n))
+
+    def dica(self, texto):
+        """Texto que aparece ao parar o mouse no ícone da bandeja (útil quando a faixa está escondida)."""
+        texto = texto[:127]
+        if texto != getattr(self, "_dica", None):
+            self._dica = texto
             n = self.dados()
-            n.uFlags = NIF_INFO
-            n.szInfoTitle, n.szInfo = titulo[:63], texto[:255]
-            n.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON
-            n.hBalloonIcon = self.icone_grande
+            n.uFlags, n.szTip = NIF_TIP, texto
             shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(n))
 
     def remove(self):
@@ -795,6 +817,10 @@ class _PseudoFaixa:            # o menu aberto pela bandeja não pertence a nenh
 
 
 # ---------- Programa ----------
+VALIDADE = 5 * 60       # leitura com mais de 5 min sem atualizar sai da barra (os leitores leem a cada 2–60 s)
+CRITICA = 5             # % do segundo aviso ("vai desligar logo")
+
+
 class App:
     def __init__(self):
         registra_classe()
@@ -805,7 +831,7 @@ class App:
         self.nova_versao = None
         self.cheia_seguidas = 0
         self.cheia_candidata = False
-        self.avisados_fraca, self.avisados_cheio = set(), set()
+        self.avisados_fraca, self.avisados_cheio, self.avisados_critica = set(), set(), set()
         self.ultimo_salvo = self.ultimo_limpeza = time.time()
         global _bandeja
         _bandeja = self.bandeja = Bandeja(self)
@@ -827,8 +853,12 @@ class App:
                 anota(f"erro tratado em {funcao.__name__}:\n{traceback.format_exc()}")
 
     def tick(self):
+        nucleo.expira(VALIDADE)          # leitor travado não deixa uma % velha parada na barra
         cfg = nucleo.config()
         itens = itens_visiveis(cfg)
+        todos = itens_visiveis(dict(cfg, mostrar_ate=100))
+        self.bandeja.dica("\n".join(f"{i['nome'][:30]}: {i['nivel']}%" + (" ⚡" if i["carregando"] else "")
+                                     for i in todos) or f"{APP}: nenhum periférico lido")
         cheia = monitor_em_tela_cheia(set(JANELAS))
         self.cheia_seguidas = self.cheia_seguidas + 1 if cheia else 0
         self.cheia_candidata = bool(cheia)           # enquanto for candidata, ninguém joga a faixa para a frente
@@ -861,8 +891,13 @@ class App:
                 if chave not in self.avisados_fraca:
                     self.avisados_fraca.add(chave)
                     avisa("Bateria fraca", f"{v['nome']} está com {v['nivel']}%. Hora de carregar.")
+                # segundo aviso, quando está quase desligando (só se o primeiro foi bem antes)
+                if v["nivel"] <= CRITICA < cfg["alerta"] and chave not in self.avisados_critica:
+                    self.avisados_critica.add(chave)
+                    avisa("Bateria acabando", f"{v['nome']} está com {v['nivel']}%. Vai desligar logo.")
             elif v["carregando"] or v["nivel"] > cfg["alerta"] + 5:
                 self.avisados_fraca.discard(chave)
+                self.avisados_critica.discard(chave)
             if cfg["aviso_cheio"] and v["carregando"] and v["nivel"] >= 100:
                 if chave not in self.avisados_cheio:
                     self.avisados_cheio.add(chave)
@@ -936,6 +971,10 @@ class App:
             os.startfile(self.nova_versao[1])
 
     def mensagem(self, hwnd, msg, wp, lp):
+        if msg == WM_TIMER and wp == 3:            # próximo aviso da fila
+            user32.KillTimer(self.ctrl, 3)
+            self.bandeja.mostra_fila()
+            return 0
         if msg == WM_TIMER:
             self.seguro(self.rapido if wp == 2 else self.tick)
             return 0
@@ -956,6 +995,7 @@ class App:
             return 0
         if msg == self.msg_barra_criada:
             self.bandeja.adiciona()
+            self.bandeja._dica = None
             return 0
         if msg == WM_CLOSE:
             self.bandeja.remove()
