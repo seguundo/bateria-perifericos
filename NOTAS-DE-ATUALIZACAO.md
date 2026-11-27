@@ -1,5 +1,16 @@
 # Notas de atualização
 
+## 1.3.0 (26/11/2026): carga do headset, painel com gráfico e avisos novos
+
+- **Headset Corsair carregando:** o iCUE não informa isso, então o programa deduz pela subida firme da % (leva uns 10 min para perceber; ainda não conferido com o headset na tomada). Com isso aparecem o raio, o aviso de carga completa e a previsão de carga.
+- **Carregue antes de parar:** à noite (22 h, ajustável) avisa o que não deve aguentar o uso do dia seguinte.
+- **Aparelho dormindo:** o mouse não some mais após 30 s; fica apagado, com a última %, por até 30 min.
+- **Previsão em dias:** "Restam ≈ 40 h de uso (uns 8 dias)", pelo seu ritmo (precisa de 3 dias de uso registrados).
+- **Painel:** clique no ícone (ou no nome, no menu) para ver o gráfico dos últimos 7 dias e a última recarga.
+- **Acabando (5%):** o ícone pisca por 30 s e toca um som (dá para desligar), útil em tela cheia.
+- **Barra no alto da tela:** a dica e o painel abrem abaixo dela.
+- **Testes:** 28 (9 novos).
+
 ## 1.2.2 (26/11/2026): correções e melhorias
 
 ### Correções

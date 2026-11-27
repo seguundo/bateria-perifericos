@@ -17,6 +17,7 @@ import threading
 import time
 import urllib.request
 import winreg
+import winsound
 from ctypes import wintypes as wt
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont
@@ -26,6 +27,7 @@ import atalho
 import icone
 import leitores
 import nucleo
+import painel
 from nucleo import APP, VERSAO
 
 PASTA = os.path.dirname(os.path.abspath(__file__))
@@ -111,13 +113,16 @@ def desenha_faixa(itens, altura, escala, alerta):
         x0 = x
         # bateria fraca: o bloco inteiro (ícone + número) fica vermelho, não só a cor do número
         c = vermelho if (it["nivel"] <= alerta and not it["carregando"]) else cor
+        raio = cor
+        if it.get("dormindo") or it.get("piscou"):          # dormindo (ou piscando): mais apagado, ainda legível
+            c, raio = c[:3] + (125,), cor[:3] + (125,)
         d.text((x, meio), GLIFO.get(it["tipo"], G_BLUETOOTH), font=f_icone, fill=c, anchor="lm")
         x += wi + gap_icone
         d.text((x, meio + round(0.5 * escala)), txt, font=f_txt, fill=c, anchor="lm")
         x += wtx
         if wr:
             x += gap_raio
-            x += desenha_raio(d, x, meio, escala, cor)
+            x += desenha_raio(d, x, meio, escala, raio)
         regioes.append((int(x0 - gap_item / 2), int(x + gap_item / 2), it["chave"]))
         x += gap_item
     return img, regioes
@@ -365,6 +370,7 @@ ctypes.windll.dwmapi.DwmGetWindowAttribute.argtypes = [wt.HWND, wt.DWORD, ctypes
 
 WM_DESTROY, WM_TIMER, WM_NCHITTEST, WM_MOVING, WM_EXITSIZEMOVE, WM_ENTERSIZEMOVE = 0x2, 0x113, 0x84, 0x216, 0x232, 0x231
 WM_NCRBUTTONUP, WM_RBUTTONUP, WM_CLOSE = 0xA5, 0x205, 0x10
+WM_NCLBUTTONDOWN = 0xA1
 HTCAPTION, HTTRANSPARENT = 2, -1
 WS_POPUP = 0x80000000
 WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT = 0x80000, 0x80, 0x8, 0x08000000, 0x20
@@ -608,7 +614,8 @@ class Faixa:
             esc = 1.0
         esc_txt = esc * cfg["tamanho"]
         altura = r.bottom - r.top
-        chave = (tuple((i["chave"], i["tipo"], i["nivel"], i["carregando"]) for i in itens),
+        chave = (tuple((i["chave"], i["tipo"], i["nivel"], i["carregando"], i.get("dormindo"), i.get("piscou"))
+                       for i in itens),
                  altura, esc_txt, tema_claro(), cfg["alerta"])
         if chave != self.ultimo:
             self.ultimo = chave
@@ -655,6 +662,16 @@ class Faixa:
     def mensagem(self, hwnd, msg, wp, lp):
         if msg == WM_NCHITTEST:
             return HTCAPTION                       # arrastar com o botão esquerdo
+        if msg == WM_NCLBUTTONDOWN:
+            p = wt.POINT()
+            user32.GetCursorPos(ctypes.byref(p))
+            antes = retangulo(hwnd).left
+            user32.DefWindowProcW(hwnd, msg, wp, lp)     # só volta quando o botão é solto (arraste ou clique)
+            if abs(retangulo(hwnd).left - antes) < 2:    # clique sem arrastar: abre o histórico do ícone
+                item = self.item_em(p.x, p.y)
+                if item:
+                    self.app.painel.alterna(self, *item)
+            return 0
         if msg == WM_ENTERSIZEMOVE:
             self.arrastando = True
             self.pos_antes = self.pos
@@ -681,6 +698,61 @@ class Faixa:
         return None
 
 
+def junto_da_barra(topo, base, altura, monitor, folga):
+    """Posição vertical de um balão: acima da barra; abaixo, se a barra estiver no alto da tela."""
+    y = topo - altura - folga
+    return y if y >= monitor.top else base + folga
+
+
+# ---------- Painel com o gráfico de 7 dias (clique no ícone) ----------
+class Painel:
+    def __init__(self, app):
+        self.app = app
+        self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, CLASSE, APP,
+                                           WS_POPUP, 0, 0, 1, 1, None, None, kernel32.GetModuleHandleW(None), None)
+        JANELAS[self.hwnd] = self
+        self.chave = None
+        self.fechado = (None, 0)
+
+    def alterna(self, faixa, chave, centro_x):
+        # clicar de novo no mesmo ícone fecha (o painel já se fechou ao perder o foco)
+        if chave == self.chave or (chave == self.fechado[0] and time.time() - self.fechado[1] < 0.6):
+            self.esconde()
+            self.fechado = (None, 0)
+            return
+        self.abre(faixa.barra_rect, monitor_de(faixa.hwnd), user32.GetDpiForWindow(faixa.hwnd) / 96,
+                  chave, centro_x)
+
+    def abre(self, barra, m, esc, chave, centro_x):
+        v = nucleo.instantaneo().get(chave)
+        if not v:
+            return
+        self.app.dica.esconde()
+        img = painel.desenha(v, nucleo.historico(chave), nucleo.previsao(chave), esc, tema_claro(), fonte_texto)
+        w, h = img.size
+        x = min(max(centro_x - w // 2, m.left + 8), m.right - w - 8)
+        pinta(self.hwnd, img, x, junto_da_barra(barra[1], barra[3], h, m, round(10 * esc)))
+        self.chave = chave
+        para_frente(self.hwnd)
+        user32.ShowWindow(self.hwnd, 5)
+        user32.SetForegroundWindow(self.hwnd)      # com o foco, clicar fora fecha
+
+    def esconde(self):
+        if self.chave is not None:
+            self.fechado = (self.chave, time.time())
+            self.chave = None
+            user32.ShowWindow(self.hwnd, 0)
+
+    def mensagem(self, hwnd, msg, wp, lp):
+        if msg == 0x0006 and not wp & 0xFFFF:      # WM_ACTIVATE: perdeu o foco
+            self.esconde()
+            return 0
+        if msg in (0x0202, WM_RBUTTONUP):          # clique dentro também fecha
+            self.esconde()
+            return 0
+        return None
+
+
 # ---------- Dica ao passar o mouse ----------
 class Dica:
     def __init__(self):
@@ -695,7 +767,7 @@ class Dica:
         v = nucleo.instantaneo().get(chave)
         if not v:
             return None
-        estado = "carregando" if v["carregando"] else "na bateria"
+        estado = "dormindo" if v.get("dormindo") else "carregando" if v["carregando"] else "na bateria"
         fraca = not v["carregando"] and v["nivel"] <= nucleo.config()["alerta"]
         prev = nucleo.previsao(chave)
         linhas = [(v["nome"][:40], "titulo"), (f"{v['nivel']}% · {estado}", "alerta" if fraca else "normal")]
@@ -725,7 +797,7 @@ class Dica:
             bl, bt, br, bb = faixa.barra_rect
             m = monitor_de(faixa.hwnd)
             x = min(max(centro_x - w // 2, m.left + 4), m.right - w - 4)
-            y = bt - h - round(8 * esc)
+            y = junto_da_barra(bt, bb, h, m, round(8 * esc))
             pinta(self.hwnd, img, x, y)
         para_frente(self.hwnd)
         self.visivel = True
@@ -828,10 +900,14 @@ class App:
         JANELAS[self.ctrl] = self
         self.faixas = {}
         self.dica = Dica()
+        self.painel = Painel(self)
         self.nova_versao = None
+        self.piscando = {}           # chave -> até quando o ícone pisca
+        self.pisca = False
         self.cheia_seguidas = 0
         self.cheia_candidata = False
         self.avisados_fraca, self.avisados_cheio, self.avisados_critica = set(), set(), set()
+        self.avisados_som = set()
         self.ultimo_salvo = self.ultimo_limpeza = time.time()
         global _bandeja
         _bandeja = self.bandeja = Bandeja(self)
@@ -857,7 +933,12 @@ class App:
         cfg = nucleo.config()
         itens = itens_visiveis(cfg)
         todos = itens_visiveis(dict(cfg, mostrar_ate=100))
+        self.pisca = not self.pisca
+        agora = time.time()
+        for i in itens:
+            i["piscou"] = self.pisca and self.piscando.get(i["chave"], 0) > agora
         self.bandeja.dica("\n".join(f"{i['nome'][:30]}: {i['nivel']}%" + (" ⚡" if i["carregando"] else "")
+                                     + (" (dormindo)" if i.get("dormindo") else "")
                                      for i in todos) or f"{APP}: nenhum periférico lido")
         cheia = monitor_em_tela_cheia(set(JANELAS))
         self.cheia_seguidas = self.cheia_seguidas + 1 if cheia else 0
@@ -875,6 +956,7 @@ class App:
         for id_barra in [i for i in self.faixas if i not in presentes]:
             self.faixas.pop(id_barra).destroi()
         self.confere_avisos(cfg)
+        self.confere_noite(cfg)
         if time.time() - self.ultimo_limpeza > 300:   # esquece as janelas "intocáveis" de vez em quando
             self.ultimo_limpeza = time.time()
             for f in self.faixas.values():
@@ -885,8 +967,16 @@ class App:
 
     def confere_avisos(self, cfg):
         for chave, v in nucleo.instantaneo().items():
-            if chave in cfg["ocultos"]:
+            if chave in cfg["ocultos"] or v.get("dormindo"):
                 continue
+            # acabando: pisca na barra e toca um som (em tela cheia o aviso do Windows pode passar batido)
+            if v["nivel"] <= CRITICA and not v["carregando"] and chave not in self.avisados_som:
+                self.avisados_som.add(chave)
+                self.piscando[chave] = time.time() + 30
+                if cfg["som_critico"]:
+                    winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
+            elif v["carregando"] or v["nivel"] > CRITICA + 5:
+                self.avisados_som.discard(chave)
             if cfg["aviso_fraca"] and not v["carregando"] and v["nivel"] <= cfg["alerta"]:
                 if chave not in self.avisados_fraca:
                     self.avisados_fraca.add(chave)
@@ -904,6 +994,21 @@ class App:
                     avisa("Carga completa", f"{v['nome']} está com 100%. Já pode tirar da tomada.")
             elif not v["carregando"]:
                 self.avisados_cheio.discard(chave)
+
+    def confere_noite(self, cfg):
+        """Uma vez por noite e por aparelho: avisa o que não deve aguentar o uso de amanhã."""
+        dia = cfg["aviso_noite"] and nucleo.dia_da_noite(cfg["hora_noite"])
+        if not dia:
+            return
+        avisadas = cfg["noite_avisada"]
+        for chave in nucleo.instantaneo():
+            if chave in cfg["ocultos"] or avisadas.get(chave) == dia:
+                continue
+            texto = nucleo.nao_aguenta_amanha(chave, cfg["alerta"])
+            if texto:
+                avisadas[chave] = dia
+                nucleo.muda_config(noite_avisada=avisadas)
+                avisa("Carregue antes de parar", texto)
 
     def rapido(self):
         p = wt.POINT()
@@ -924,20 +1029,22 @@ class App:
                     item = f.item_em(p.x, p.y)
                     if item:
                         achou = (f, item[0], item[1])
-        if achou:
+        if achou and self.painel.chave is None:
             self.dica.mostra(*achou)
         else:
             self.dica.esconde()
 
     def menu(self, faixa):
         self.dica.esconde()
+        self.painel.esconde()
         m = user32.CreatePopupMenu()
         cfg = nucleo.config()
-        for it in itens_visiveis(dict(cfg, mostrar_ate=100)):
+        lista = itens_visiveis(dict(cfg, mostrar_ate=100))
+        for n, it in enumerate(lista):
             prev = nucleo.previsao(it["chave"])
             texto = f"{it['nome'][:40]}: {it['nivel']}%" + (" (carregando)" if it["carregando"] else "")
             texto += f"  ·  {prev}" if prev else ""
-            user32.AppendMenuW(m, MF_STRING | MF_GRAYED, 0, texto.replace("&", "&&"))   # "&" viraria sublinhado
+            user32.AppendMenuW(m, MF_STRING, 100 + n, texto.replace("&", "&&"))   # clicar abre o histórico
         user32.AppendMenuW(m, MF_SEPARATOR, 0, None)
         if self.nova_versao:
             user32.AppendMenuW(m, MF_STRING, 5, f"Versão nova {self.nova_versao[0]}: abrir no GitHub")
@@ -969,6 +1076,14 @@ class App:
             ajustes.abre()
         elif cmd == 5 and self.nova_versao:
             os.startfile(self.nova_versao[1])
+        elif 100 <= cmd < 100 + len(lista):
+            b = barras()
+            if b:
+                tb, r = b[0][1], b[0][2]
+                onde = faixa.barra_rect if getattr(faixa, "barra_rect", None) else (r.left, r.top, r.right, r.bottom)
+                janela = faixa.hwnd if faixa.id else tb
+                self.painel.abre(onde, monitor_de(janela), user32.GetDpiForWindow(janela) / 96,
+                                 lista[cmd - 100]["chave"], p.x)
 
     def mensagem(self, hwnd, msg, wp, lp):
         if msg == WM_TIMER and wp == 3:            # próximo aviso da fila
@@ -1002,6 +1117,7 @@ class App:
             for f in list(self.faixas.values()):
                 f.destroi()
             user32.DestroyWindow(self.dica.hwnd)
+            user32.DestroyWindow(self.painel.hwnd)
             user32.DestroyWindow(self.ctrl)
             user32.PostQuitMessage(0)
             return 0

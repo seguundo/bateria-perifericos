@@ -8,7 +8,7 @@ import time
 import traceback
 
 APP = "Bateria dos Periféricos"
-VERSAO = "1.2.2"
+VERSAO = "1.3.0"
 ORDEM_TIPO = {"headset": 0, "mouse": 1, "teclado": 2, "controle": 3, "bluetooth": 4}
 REPO = "seguundo/bateria-perifericos"          # onde procurar versão nova (troque se fizer um fork)
 PASTA_DADOS = os.path.join(os.environ.get("APPDATA", "."), "BateriaPerifericos")
@@ -22,6 +22,10 @@ PADRAO = {
     "alerta": 15,                # % de bateria fraca (número vermelho + aviso)
     "aviso_fraca": True,
     "aviso_cheio": True,         # avisa quando terminar de carregar
+    "aviso_noite": True,         # "carregue antes de parar": avisa se não aguenta o uso de amanhã
+    "hora_noite": 22,            # a partir de que hora esse aviso aparece
+    "som_critico": True,         # som quando a bateria está acabando (ajuda em tela cheia)
+    "noite_avisada": {},         # chave -> dia em que o aviso da noite já saiu
     "procurar_versao": True,
     "ocultos": [],               # chaves dos periféricos escondidos
     "ordem": [],                 # chaves na ordem escolhida
@@ -111,6 +115,9 @@ def salva():
 
 
 # ---------- leituras ----------
+SONECA = 30 * 60      # aparelho dormindo continua na barra (apagado) por este tempo
+
+
 def atualiza(chave, nome, tipo, nivel, carregando=False, origem=""):
     """Os leitores chamam isto a cada leitura. tipo: headset, mouse, teclado, controle ou bluetooth."""
     global _cfg_sujo
@@ -143,6 +150,14 @@ def esquece(chave):
     salva()
 
 
+def dorme(chave):
+    """O aparelho parou de mandar leituras (dormindo ou desligado): guarda a última % por um tempo."""
+    with trava:
+        v = estado.get(chave)
+        if v and not v.get("dormindo"):
+            v.update(dormindo=True, dormiu=time.time())
+
+
 def some(chave):
     """O periférico desligou ou sumiu."""
     with trava:
@@ -157,10 +172,12 @@ def some_todos(prefixo, menos=()):
 
 def expira(segundos):
     """Tira da barra leituras velhas (leitor travado ou aparelho que sumiu sem avisar)."""
-    limite = time.time() - segundos
+    agora = time.time()
     with trava:
-        for k in [k for k, v in estado.items() if v["visto"] < limite]:
-            estado.pop(k, None)
+        for k, v in list(estado.items()):
+            velho = agora - v["dormiu"] > SONECA if v.get("dormindo") else agora - v["visto"] > segundos
+            if velho:
+                estado.pop(k, None)
 
 
 _erros_vistos = set()
@@ -182,6 +199,45 @@ def erro(onde):
 def espera(segundos):
     """Dorme, mas acorda na hora se o programa for fechado. Devolve True se é para parar."""
     return parar.wait(segundos)
+
+
+class DetectaCarga:
+    """Deduz que está carregando quando o aparelho não informa (ex.: Corsair pelo iCUE).
+
+    A % de alguns headsets oscila até ±7 entre uma leitura e outra, por isso compara a mediana
+    das últimas leituras com a menor mediana recente: só uma subida firme conta.
+    """
+    JANELA = 40 * 60      # quanto tempo para trás é comparado
+    SUBIDA = 8            # pontos de subida (na mediana) para considerar que está carregando
+    QUEDA = 5             # pontos de queda desde o pico para considerar que saiu da tomada
+    PARADO = 25 * 60      # sem subir por este tempo (abaixo de 95%) = não está mais carregando
+    LACUNA = 3 * 60       # sumiu por mais que isto: começa do zero
+
+    def __init__(self):
+        self.leituras = []        # (hora, %)
+        self.medianas = []        # (hora, mediana das últimas 5)
+        self.carregando = False
+        self.pico = self.hora_pico = 0
+
+    def le(self, nivel, agora=None):
+        agora = time.time() if agora is None else agora
+        if self.leituras and agora - self.leituras[-1][0] > self.LACUNA:
+            self.__init__()
+        self.leituras = self.leituras[-4:] + [(agora, nivel)]
+        if len(self.leituras) < 5:
+            return self.carregando
+        mediana = sorted(n for _, n in self.leituras)[2]
+        self.medianas = [(t, m) for t, m in self.medianas if agora - t <= self.JANELA] + [(agora, mediana)]
+        if not self.carregando:
+            if mediana - min(m for _, m in self.medianas) >= self.SUBIDA:
+                self.carregando, self.pico, self.hora_pico = True, mediana, agora
+        else:
+            if mediana > self.pico:
+                self.pico, self.hora_pico = mediana, agora
+            if self.pico - mediana >= self.QUEDA or (self.pico < 95 and agora - self.hora_pico > self.PARADO):
+                self.carregando = False
+                self.medianas = [(agora, mediana)]
+        return self.carregando
 
 
 def instantaneo():
@@ -276,9 +332,79 @@ def previsao(chave):
     por_hora, _ = ritmo(pontos, carregando)
     if not por_hora:
         return None
-    falta = (atual["nivel"] if not carregando else 100 - atual["nivel"]) / por_hora
-    texto = _duracao(falta)
-    return f"Cheio em ≈ {texto}" if carregando else f"Restam ≈ {texto} de uso"
+    if carregando:
+        return f"Cheio em ≈ {_duracao((100 - atual['nivel']) / por_hora)}"
+    falta = atual["nivel"] / por_hora
+    por_dia = horas_por_dia(pontos)
+    if not por_dia:
+        return f"Restam ≈ {_duracao(falta)} de uso"
+    texto = f"{round(falta)} h" if falta >= 36 else _duracao(falta)
+    dias = round(falta / por_dia)
+    extra = f" (uns {dias} dias)" if dias >= 2 else ""
+    return f"Restam ≈ {texto} de uso{extra}"
+
+
+def horas_por_dia(pontos, agora=None):
+    """Quantas horas por dia o aparelho costuma ser usado (média dos dias completos com uso).
+    Devolve None com menos de 3 dias de dados."""
+    hoje = time.localtime(agora)[:3]
+    dias = {}
+    for a, b in zip(pontos, pontos[1:]):
+        dt = b[0] - a[0]
+        dia = time.localtime(a[0])[:3]
+        if not a[2] and not b[2] and 0 < dt <= LACUNA and dia != hoje:
+            dias[dia] = dias.get(dia, 0) + dt / 3600
+    usados = [h for h in dias.values() if h >= 0.5]
+    return sum(usados) / len(usados) if len(usados) >= 3 else None
+
+
+def historico(chave):
+    with trava:
+        return list((_hist or {}).get(chave, []))
+
+
+def ultima_recarga(pontos):
+    """(hora, %) em que terminou a recarga mais recente do histórico, ou None."""
+    fim = None
+    for a, b in zip(pontos, pontos[1:]):
+        if b[2]:
+            fim = (b[0], b[1])
+        elif b[1] - a[1] >= 12:               # subiu de uma vez: carregou com o programa sem ver
+            fim = (b[0], b[1])
+    if fim is None and pontos and pontos[-1][2]:
+        fim = (pontos[-1][0], pontos[-1][1])
+    return fim
+
+
+# ---------- aviso "carregue antes de parar" ----------
+DURA_NOITE = 4        # o aviso vale da hora escolhida até 4 h depois
+
+
+def dia_da_noite(hora, agora=None):
+    """Se estamos no horário do aviso, devolve a data em que esse horário começou; senão None."""
+    agora = time.time() if agora is None else agora
+    passou = (time.localtime(agora).tm_hour - hora) % 24
+    if passou >= DURA_NOITE:
+        return None
+    return time.strftime("%Y-%m-%d", time.localtime(agora - passou * 3600))
+
+
+def nao_aguenta_amanha(chave, alerta):
+    """Texto do aviso se a bateria não deve durar o uso de amanhã (com 20% de folga), senão None.
+    Sem ritmo aprendido ainda, usa a % (até 10 pontos acima do alerta de bateria fraca)."""
+    with trava:
+        v = dict(estado.get(chave) or {})
+    if not v or v["carregando"]:
+        return None
+    pontos = historico(chave)
+    por_hora = ritmo(pontos, False)[0] if len(pontos) >= 2 else None
+    if not por_hora:
+        return f"{v['nome']} está com {v['nivel']}%." if v["nivel"] <= alerta + 10 else None
+    resta = v["nivel"] / por_hora
+    por_dia = horas_por_dia(pontos) or 8
+    if resta >= por_dia * 1.2:
+        return None
+    return f"{v['nome']}: {v['nivel']}%, cerca de {_duracao(resta)} de uso."
 
 
 def _duracao(horas):

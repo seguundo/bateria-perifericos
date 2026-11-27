@@ -17,8 +17,10 @@ os.environ["APPDATA"] = DADOS                      # antes de importar o program
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import atalho  # noqa: E402
+import bateria  # noqa: E402
 import leitores  # noqa: E402
 import nucleo  # noqa: E402
+import painel  # noqa: E402
 
 
 def lejson(caminho):
@@ -190,6 +192,80 @@ class TestaVersao122(unittest.TestCase):
         self.assertEqual(leitores._carga(4, unificada=True), (False, False))
         self.assertEqual(leitores._carga(2, unificada=True), (True, False))
         self.assertEqual(leitores._carga(4), (True, False))
+
+
+class TestaVersao130(unittest.TestCase):
+    def setUp(self):
+        zera()
+
+    def carga(self, niveis):
+        d, saida = nucleo.DetectaCarga(), []
+        for i, n in enumerate(niveis):
+            saida.append(d.le(n, 1000 + i * 60))
+        return saida
+
+    def test_oscilacao_do_headset_nao_vira_carga(self):
+        reais = [33, 30, 30, 30, 35, 30, 28, 35, 30, 28, 30, 35, 30, 28, 35, 30, 28, 33, 28, 33, 28, 33] * 4
+        self.assertNotIn(True, self.carga(reais))
+
+    def test_subida_firme_vira_carga_e_queda_desliga(self):
+        s = self.carga([25] * 8 + list(range(26, 70, 2)) + list(range(66, 50, -2)))
+        self.assertTrue(s[25])
+        self.assertFalse(s[-1])
+
+    def test_cheio_continua_carregando_e_parado_no_meio_desliga(self):
+        self.assertTrue(self.carga([60] * 6 + list(range(62, 101, 2)) + [100] * 40)[-1])
+        self.assertFalse(self.carga([20] * 6 + list(range(22, 51, 2)) + [50] * 40)[-1])
+
+    def test_dormindo_fica_um_tempo_e_depois_sai(self):
+        nucleo.atualiza("m", "M", "mouse", 50)
+        nucleo.dorme("m")
+        nucleo.estado["m"]["visto"] -= 600
+        nucleo.expira(300)
+        self.assertIn("m", nucleo.instantaneo())
+        nucleo.estado["m"]["dormiu"] -= nucleo.SONECA + 1
+        nucleo.expira(300)
+        self.assertNotIn("m", nucleo.instantaneo())
+
+    def pontos(self, dias, horas=4):
+        base = time.mktime((2026, 3, 1, 10, 0, 0, 0, 0, -1))
+        return [[int(base + d * 86400 + i * 600), 90 - d * 10 - i // 3, 0]
+                for d in range(dias) for i in range(horas * 6 + 1)]
+
+    def test_horas_por_dia(self):
+        agora = time.mktime((2026, 3, 20, 12, 0, 0, 0, 0, -1))
+        self.assertAlmostEqual(nucleo.horas_por_dia(self.pontos(3), agora), 4, delta=0.1)
+        self.assertIsNone(nucleo.horas_por_dia(self.pontos(2), agora))
+
+    def test_horario_do_aviso_atravessa_a_meia_noite(self):
+        def em(dia, h):
+            return time.mktime((2026, 3, dia, h, 30, 0, 0, 0, -1))
+        self.assertIsNone(nucleo.dia_da_noite(22, em(5, 21)))
+        self.assertEqual(nucleo.dia_da_noite(22, em(5, 22)), "2026-03-05")
+        self.assertEqual(nucleo.dia_da_noite(22, em(6, 1)), "2026-03-05")
+        self.assertIsNone(nucleo.dia_da_noite(22, em(6, 3)))
+
+    def test_nao_aguenta_amanha(self):
+        nucleo._hist = {"m": self.pontos(4)}
+        base = dict(nome="M", tipo="mouse", carregando=False, visto=time.time(), origem="")
+        nucleo.estado["m"] = dict(base, nivel=5)
+        self.assertIn("5%", nucleo.nao_aguenta_amanha("m", 15))
+        nucleo.estado["m"] = dict(base, nivel=90)
+        self.assertIsNone(nucleo.nao_aguenta_amanha("m", 15))
+        nucleo.estado["m"] = dict(base, nivel=5, carregando=True)
+        self.assertIsNone(nucleo.nao_aguenta_amanha("m", 15))
+
+    def test_ultima_recarga(self):
+        self.assertIsNone(nucleo.ultima_recarga([[1, 33, 0], [2, 40, 0]]))
+        self.assertEqual(nucleo.ultima_recarga([[1, 15, 0], [2, 27, 1], [3, 39, 1], [4, 38, 0]]), (3, 39))
+        self.assertEqual(nucleo.ultima_recarga([[1, 20, 0], [2, 80, 0]]), (2, 80))
+
+    def test_painel_desenha_com_e_sem_historico(self):
+        v = dict(nome="M", tipo="mouse", nivel=50, carregando=False)
+        agora = int(time.time())
+        for h in ([], [[agora - 600, 51, 0], [agora, 50, 0]]):
+            img = painel.desenha(v, h, None, 1.5, False, bateria.fonte_texto)
+            self.assertEqual(img.size[0], 510)
 
 
 class TestaAtalho(unittest.TestCase):

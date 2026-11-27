@@ -6,9 +6,11 @@ Mostra na barra de tarefas do Windows 11, ao lado da setinha `^`, o ícone e a p
 
 - Fica sempre visível na barra, em todas as telas (não escondido no menu da bandeja).
 - **Pare o mouse em cima** de um ícone para ver o nome, o estado e a **previsão de duração** ("Restam ≈ 2 dias").
-- **Avisos do Windows** quando a bateria fica fraca e quando termina de carregar.
+- **Avisos do Windows** quando a bateria fica fraca, quando termina de carregar e, à noite, quando não vai aguentar o dia seguinte. Com 5%, o ícone pisca e toca um som.
+- **Clique** em um ícone para ver o gráfico dos últimos 7 dias e a última recarga.
+- Aparelho dormindo fica apagado na barra, com a última %.
 - Ícones e fonte do próprio Windows 11 (mesmo tamanho do relógio), que acompanham o tema claro/escuro. Bateria fraca acende em vermelho; raio quando está carregando.
-- Periférico desligado some sozinho e volta quando liga. Os ícones se escondem em jogos e vídeos em tela cheia.
+- Periférico desligado some sozinho (o mouse Attack Shark, depois de 30 min apagado) e volta quando liga. Os ícones se escondem em jogos e vídeos em tela cheia.
 - Arraste para o lado para mudar de lugar. Botão direito: **Ajustes** (telas, tamanho, quais periféricos e em que ordem, avisos), Iniciar com o Windows, Sair.
 - Avisa quando sai versão nova aqui no GitHub.
 

@@ -93,6 +93,14 @@ class Ajustes:
         self.item(f, ttk.Checkbutton(f, text="Avisar quando a bateria ficar fraca", variable=self.aviso_fraca))
         self.aviso_cheio = tk.BooleanVar(value=cfg["aviso_cheio"])
         self.item(f, ttk.Checkbutton(f, text="Avisar quando terminar de carregar", variable=self.aviso_cheio))
+        self.som = tk.BooleanVar(value=cfg["som_critico"])
+        self.item(f, ttk.Checkbutton(f, text="Tocar um som quando estiver acabando (5%)", variable=self.som))
+        self.aviso_noite = tk.BooleanVar(value=cfg["aviso_noite"])
+        self.item(f, ttk.Checkbutton(f, text="Avisar à noite o que não aguenta o dia seguinte",
+                                     variable=self.aviso_noite))
+        self.hora_noite = tk.IntVar(value=cfg["hora_noite"])
+        self.campo(f, "Hora do aviso da noite",
+                   ttk.Spinbox(f, from_=0, to=23, increment=1, textvariable=self.hora_noite, width=7))
         self.procurar = tk.BooleanVar(value=cfg["procurar_versao"])
         self.item(f, ttk.Checkbutton(f, text="Avisar quando sair versão nova no GitHub", variable=self.procurar))
 
@@ -208,6 +216,9 @@ class Ajustes:
             alerta=numero(self.alerta, 5, 50, 15),
             aviso_fraca=self.aviso_fraca.get(),
             aviso_cheio=self.aviso_cheio.get(),
+            som_critico=self.som.get(),
+            aviso_noite=self.aviso_noite.get(),
+            hora_noite=numero(self.hora_noite, 0, 23, 22),
             procurar_versao=self.procurar.get(),
             ocultos=[k for k in self.chaves if not self.visivel[k].get()],
             ordem=list(self.chaves),

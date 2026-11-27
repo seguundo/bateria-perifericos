@@ -71,7 +71,7 @@ def le_attack_shark():
                         atualiza("x11", "Mouse Attack Shark X11", "mouse", r[4], r[3] == 3, "receptor 2,4 GHz")
                         ultimo = time.time()
                 if ultimo and time.time() - ultimo > X11_DORMINDO:
-                    some("x11")
+                    nucleo.dorme("x11")          # fica apagado na barra com a última %
                     ultimo = 0
         finally:
             _fecha(*abertos)
@@ -95,6 +95,7 @@ def le_corsair():
         return
     tipos = {CorsairDeviceType.CDT_Headset: "headset", CorsairDeviceType.CDT_Mouse: "mouse",
              CorsairDeviceType.CDT_Keyboard: "teclado"}
+    cargas = {}                   # o iCUE não diz se está carregando: deduz pela subida da %
     while True:
         vistos = set()
         try:
@@ -103,8 +104,10 @@ def le_corsair():
                 prop, e = sdk.read_device_property(d.device_id, CorsairDevicePropertyId.CDPI_BatteryLevel, 0)
                 if e == CorsairError.CE_Success and prop is not None:
                     chave = "cue" + d.device_id
+                    nivel = int(prop.value)
+                    carregando = cargas.setdefault(chave, nucleo.DetectaCarga()).le(nivel)
                     atualiza(chave, f"Corsair {d.model.title()}", tipos.get(d.type, "bluetooth"),
-                             int(prop.value), False, "iCUE")
+                             nivel, carregando, "iCUE")
                     vistos.add(chave)
         except Exception:
             nucleo.erro("Corsair")
